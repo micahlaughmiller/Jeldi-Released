@@ -1,18 +1,30 @@
 import { 
-  users, erpConnections, kpiConfigurations, kpiData, emailConfigurations, chatHistory,
-  type User, type InsertUser, type ErpConnection, type InsertErpConnection,
+  users, erpConnections, kpiConfigurations, kpiData, emailConfigurations, chatHistory, oauthSessions,
+  type User, type InsertUser, type InsertOAuthUser, type ErpConnection, type InsertErpConnection,
   type KpiConfiguration, type InsertKpiConfiguration, type KpiData, type InsertKpiData,
-  type EmailConfiguration, type InsertEmailConfiguration, type ChatHistory, type InsertChatHistory
+  type EmailConfiguration, type InsertEmailConfiguration, type ChatHistory, type InsertChatHistory,
+  type OAuthSession, type InsertOAuthSession
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByOAuthId(provider: string, oauthId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  createOAuthUser(user: InsertOAuthUser): Promise<User>;
+  updateUser(id: string, updates: Partial<User>): Promise<User | undefined>;
+
+  // OAuth Session operations
+  createOAuthSession(session: InsertOAuthSession): Promise<OAuthSession>;
+  getOAuthSession(id: string): Promise<OAuthSession | undefined>;
+  getOAuthSessionByState(state: string): Promise<OAuthSession | undefined>;
+  updateOAuthSession(id: string, updates: Partial<OAuthSession>): Promise<OAuthSession | undefined>;
+  deleteOAuthSession(id: string): Promise<boolean>;
+  cleanupExpiredOAuthSessions(): Promise<void>;
 
   // ERP Connection operations
   getErpConnections(userId: string): Promise<ErpConnection[]>;
@@ -60,6 +72,25 @@ export class DatabaseStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values(insertUser).returning();
     return user;
+  }
+
+  async getUserByOAuthId(provider: string, oauthId: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users)
+      .where(and(eq(users.authProvider, provider), eq(users.oauthId, oauthId)));
+    return user || undefined;
+  }
+
+  async createOAuthUser(insertOAuthUser: InsertOAuthUser): Promise<User> {
+    const [user] = await db.insert(users).values(insertOAuthUser).returning();
+    return user;
+  }
+
+  async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set(updates)
+      .where(eq(users.id, id))
+      .returning();
+    return user || undefined;
   }
 
   async getErpConnections(userId: string): Promise<ErpConnection[]> {
@@ -157,6 +188,38 @@ export class DatabaseStorage implements IStorage {
   async createChatHistory(chat: InsertChatHistory): Promise<ChatHistory> {
     const [newChat] = await db.insert(chatHistory).values(chat).returning();
     return newChat;
+  }
+
+  async createOAuthSession(session: InsertOAuthSession): Promise<OAuthSession> {
+    const [newSession] = await db.insert(oauthSessions).values(session).returning();
+    return newSession;
+  }
+
+  async getOAuthSession(id: string): Promise<OAuthSession | undefined> {
+    const [session] = await db.select().from(oauthSessions).where(eq(oauthSessions.id, id));
+    return session || undefined;
+  }
+
+  async getOAuthSessionByState(state: string): Promise<OAuthSession | undefined> {
+    const [session] = await db.select().from(oauthSessions).where(eq(oauthSessions.state, state));
+    return session || undefined;
+  }
+
+  async updateOAuthSession(id: string, updates: Partial<OAuthSession>): Promise<OAuthSession | undefined> {
+    const [updated] = await db.update(oauthSessions)
+      .set(updates)
+      .where(eq(oauthSessions.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteOAuthSession(id: string): Promise<boolean> {
+    const result = await db.delete(oauthSessions).where(eq(oauthSessions.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async cleanupExpiredOAuthSessions(): Promise<void> {
+    await db.delete(oauthSessions).where(sql`${oauthSessions.expiresAt} < NOW()`);
   }
 }
 

@@ -8,8 +8,14 @@ export const users = pgTable("users", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   email: text("email").notNull().unique(),
-  password: text("password").notNull(),
+  password: text("password"), // Optional for OAuth users
   role: text("role").notNull().default("user"),
+  // OAuth authentication fields
+  authProvider: text("auth_provider").default("local"), // local, google, microsoft
+  oauthId: text("oauth_id"), // OAuth provider user ID
+  profileImage: text("profile_image"), // OAuth profile image URL
+  firstName: text("first_name"), // OAuth first name
+  lastName: text("last_name"), // OAuth last name
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -56,6 +62,16 @@ export const emailConfigurations = pgTable("email_configurations", {
   refreshToken: text("refresh_token"),
   tokenExpiry: timestamp("token_expiry"),
   isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const oauthSessions = pgTable("oauth_sessions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  state: text("state").notNull().unique(), // CSRF protection state
+  provider: text("provider").notNull(), // google, microsoft
+  isCompleted: boolean("is_completed").default(false).notNull(),
+  authResult: jsonb("auth_result"), // Temporary storage for JWT and user data
+  expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -116,6 +132,14 @@ export const chatHistoryRelations = relations(chatHistory, ({ one }) => ({
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
+}).extend({
+  password: z.string().min(8).optional(), // Make password optional for OAuth
+});
+
+export const insertOAuthUserSchema = createInsertSchema(users).omit({
+  id: true,
+  createdAt: true,
+  password: true, // OAuth users don't need passwords
 });
 
 export const insertErpConnectionSchema = createInsertSchema(erpConnections).omit({
@@ -138,6 +162,11 @@ export const insertEmailConfigurationSchema = createInsertSchema(emailConfigurat
   createdAt: true,
 });
 
+export const insertOAuthSessionSchema = createInsertSchema(oauthSessions).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertChatHistorySchema = createInsertSchema(chatHistory).omit({
   id: true,
   timestamp: true,
@@ -145,6 +174,7 @@ export const insertChatHistorySchema = createInsertSchema(chatHistory).omit({
 
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
+export type InsertOAuthUser = z.infer<typeof insertOAuthUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertErpConnection = z.infer<typeof insertErpConnectionSchema>;
 export type ErpConnection = typeof erpConnections.$inferSelect;
@@ -154,5 +184,7 @@ export type InsertKpiData = z.infer<typeof insertKpiDataSchema>;
 export type KpiData = typeof kpiData.$inferSelect;
 export type InsertEmailConfiguration = z.infer<typeof insertEmailConfigurationSchema>;
 export type EmailConfiguration = typeof emailConfigurations.$inferSelect;
+export type InsertOAuthSession = z.infer<typeof insertOAuthSessionSchema>;
+export type OAuthSession = typeof oauthSessions.$inferSelect;
 export type InsertChatHistory = z.infer<typeof insertChatHistorySchema>;
 export type ChatHistory = typeof chatHistory.$inferSelect;

@@ -8,8 +8,12 @@ import { analyzeERPData, generateKPIInsights } from "./services/openai";
 import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema } from "@shared/schema";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import passport from "passport";
+import { OAuthService } from "./services/oauthService";
+import { getJwtSecret } from "./env-validation";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+// JWT_SECRET accessed at runtime, not import-time
+const getJwtSecretAtRuntime = () => getJwtSecret();
 
 // WebSocket clients tracking
 const wsClients = new Map<string, WebSocket>();
@@ -38,6 +42,21 @@ async function broadcastERPStatusUpdate(userId: string) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Setup OAuth strategies
+  OAuthService.setupStrategies();
+  
+  // Initialize passport middleware
+  app.use(passport.initialize());
+  
+  // Cleanup expired OAuth sessions periodically
+  setInterval(async () => {
+    try {
+      await storage.cleanupExpiredOAuthSessions();
+    } catch (error) {
+      console.error('OAuth session cleanup error:', error);
+    }
+  }, 5 * 60 * 1000); // Every 5 minutes
+  
   // Authentication middleware
   const authenticateToken = async (req: any, res: any, next: any) => {
     const authHeader = req.headers['authorization'];
@@ -48,7 +67,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      const decoded = jwt.verify(token, getJwtSecretAtRuntime()) as any;
       const user = await storage.getUser(decoded.userId);
       if (!user) {
         return res.status(403).json({ message: 'Invalid token' });
@@ -71,7 +90,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "User already exists" });
       }
 
-      // Hash password
+      // Hash password (ensure password is provided for local registration)
+      if (!password) {
+        return res.status(400).json({ message: "Password is required for registration" });
+      }
       const hashedPassword = await bcrypt.hash(password, 10);
       
       // Create user
@@ -79,11 +101,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         username,
         email,
         password: hashedPassword,
+        authProvider: "local",
         role: "user"
       });
 
       // Generate token
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+      const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
       
       res.json({ 
         token, 
@@ -103,12 +126,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
+      // Check if this is an OAuth user trying to login with password
+      if (user.authProvider !== "local" || !user.password) {
+        return res.status(401).json({ message: "Please use OAuth login for this account" });
+      }
+
       const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+      const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
       
       res.json({ 
         token, 
@@ -118,6 +146,124 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(400).json({ message: "Login failed", error: (error as Error).message });
     }
   });
+
+  // OAuth routes
+  app.get("/api/oauth/providers", async (req, res) => {
+    try {
+      const providers = OAuthService.getAvailableProviders();
+      res.json(providers.map(p => ({
+        name: p.name,
+        displayName: p.displayName
+      })));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get OAuth providers", error: (error as Error).message });
+    }
+  });
+
+  // Secure OAuth session retrieval endpoint
+  app.get("/api/auth/oauth-result/:sessionId", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const authResult = await OAuthService.getCompletedOAuthSession(sessionId);
+      
+      if (!authResult) {
+        return res.status(404).json({ message: "OAuth session not found or expired" });
+      }
+      
+      res.json(authResult);
+    } catch (error) {
+      console.error("OAuth session retrieval error:", error);
+      res.status(500).json({ message: "Failed to retrieve OAuth result", error: (error as Error).message });
+    }
+  });
+
+  // Google OAuth routes
+  app.get("/api/auth/google", async (req, res, next) => {
+    try {
+      // Check if Google OAuth is configured
+      if (!OAuthService.isProviderConfigured("google")) {
+        return res.status(503).json({
+          message: "Google OAuth is not configured",
+          error: "service_unavailable",
+          details: {
+            description: "Google OAuth authentication is not available because the required environment variables are not set.",
+            required_variables: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+            instructions: "Please contact your administrator to configure Google OAuth credentials."
+          }
+        });
+      }
+
+      // Generate secure CSRF state
+      const state = OAuthService.generateSecureState();
+      await OAuthService.createOAuthSession("google", state);
+      
+      passport.authenticate("google", {
+        scope: ["profile", "email"],
+        state: state
+      })(req, res, next);
+    } catch (error) {
+      console.error("Google OAuth initiation error:", error);
+      res.redirect("/login?error=oauth_failed");
+    }
+  });
+  
+  app.get("/api/auth/google/callback",
+    passport.authenticate("google", { session: false, failureRedirect: "/login?error=oauth_failed" }),
+    async (req: any, res) => {
+      try {
+        const result = req.user;
+        // Use secure session-based approach
+        res.redirect(`/login?oauth_session=${result.sessionState}`);
+      } catch (error) {
+        console.error("Google OAuth callback error:", error);
+        res.redirect("/login?error=oauth_failed");
+      }
+    }
+  );
+
+  // Microsoft OAuth routes
+  app.get("/api/auth/microsoft", async (req, res, next) => {
+    try {
+      // Check if Microsoft OAuth is configured
+      if (!OAuthService.isProviderConfigured("microsoft")) {
+        return res.status(503).json({
+          message: "Microsoft OAuth is not configured",
+          error: "service_unavailable",
+          details: {
+            description: "Microsoft OAuth authentication is not available because the required environment variables are not set.",
+            required_variables: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
+            instructions: "Please contact your administrator to configure Microsoft OAuth credentials."
+          }
+        });
+      }
+
+      // Generate secure CSRF state
+      const state = OAuthService.generateSecureState();
+      await OAuthService.createOAuthSession("microsoft", state);
+      
+      passport.authenticate("microsoft", {
+        scope: ["openid", "profile", "email", "offline_access", "User.Read"],
+        state: state
+      })(req, res, next);
+    } catch (error) {
+      console.error("Microsoft OAuth initiation error:", error);
+      res.redirect("/login?error=oauth_failed");
+    }
+  });
+  
+  app.get("/api/auth/microsoft/callback",
+    passport.authenticate("microsoft", { session: false, failureRedirect: "/login?error=oauth_failed" }),
+    async (req: any, res) => {
+      try {
+        const result = req.user;
+        // Use secure session-based approach
+        res.redirect(`/login?oauth_session=${result.sessionState}`);
+      } catch (error) {
+        console.error("Microsoft OAuth callback error:", error);
+        res.redirect("/login?error=oauth_failed");
+      }
+    }
+  );
 
   // ERP Connection routes
   app.get("/api/erp/systems", authenticateToken, async (req: any, res) => {
@@ -397,7 +543,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         if (message.type === 'auth' && message.token) {
           try {
-            const decoded = jwt.verify(message.token, JWT_SECRET) as any;
+            const decoded = jwt.verify(message.token, getJwtSecret()) as any;
             const user = await storage.getUser(decoded.userId);
             if (user) {
               wsClients.set(user.id, ws);

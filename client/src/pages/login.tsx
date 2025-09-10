@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,80 @@ import { apiRequest } from "@/lib/queryClient";
 export default function Login() {
   const [, setLocation] = useLocation();
   const [isLoading, setIsLoading] = useState(false);
+  const [oauthProviders, setOauthProviders] = useState<{name: string; displayName: string}[]>([]);
   const { toast } = useToast();
+
+  // Check for secure OAuth callback parameters and handle login
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const oauthSession = urlParams.get('oauth_session');
+    const error = urlParams.get('error');
+
+    if (error === 'oauth_failed') {
+      toast({
+        title: "OAuth Login Failed",
+        description: "Please try again or use email/password login.",
+        variant: "destructive",
+      });
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (oauthSession) {
+      const handleSecureOAuthCallback = async () => {
+        try {
+          setIsLoading(true);
+          
+          // Securely retrieve OAuth result from server using session ID
+          const response = await fetch(`/api/auth/oauth-result/${oauthSession}`);
+          
+          if (!response.ok) {
+            throw new Error('Failed to retrieve OAuth result');
+          }
+          
+          const { token, user } = await response.json();
+          
+          localStorage.setItem("token", token);
+          localStorage.setItem("user", JSON.stringify(user));
+          
+          toast({
+            title: "Login successful",
+            description: `Welcome ${user.firstName || user.username}!`,
+          });
+          
+          setLocation("/dashboard");
+        } catch (error) {
+          console.error("Failed to process secure OAuth callback:", error);
+          toast({
+            title: "Login Error",
+            description: "Failed to process login response. Please try again.",
+            variant: "destructive",
+          });
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      
+      handleSecureOAuthCallback();
+      
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [toast, setLocation]);
+
+  // Fetch available OAuth providers
+  useEffect(() => {
+    const fetchProviders = async () => {
+      try {
+        const response = await fetch("/api/oauth/providers");
+        if (response.ok) {
+          const providers = await response.json();
+          setOauthProviders(providers);
+        }
+      } catch (error) {
+        console.error("Failed to fetch OAuth providers:", error);
+      }
+    };
+    fetchProviders();
+  }, []);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -76,6 +149,22 @@ export default function Login() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleOAuthLogin = (provider: string) => {
+    // Redirect to OAuth provider
+    window.location.href = `/api/auth/${provider}`;
+  };
+
+  const getOAuthIcon = (provider: string) => {
+    switch (provider) {
+      case 'google':
+        return <i className="fab fa-google mr-2"></i>;
+      case 'microsoft':
+        return <i className="fab fa-microsoft mr-2"></i>;
+      default:
+        return <i className="fas fa-sign-in-alt mr-2"></i>;
     }
   };
 
@@ -151,6 +240,38 @@ export default function Login() {
                     )}
                   </Button>
                 </form>
+
+                {/* Enterprise OAuth Login */}
+                {oauthProviders.length > 0 && (
+                  <>
+                    <div className="relative my-6">
+                      <div className="absolute inset-0 flex items-center">
+                        <span className="w-full border-t" />
+                      </div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-card px-2 text-muted-foreground">
+                          Or continue with Enterprise
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {oauthProviders.map((provider) => (
+                        <Button
+                          key={provider.name}
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => handleOAuthLogin(provider.name)}
+                          data-testid={`button-oauth-${provider.name}`}
+                        >
+                          {getOAuthIcon(provider.name)}
+                          Sign in with {provider.displayName}
+                        </Button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
