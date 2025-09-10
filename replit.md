@@ -1,6 +1,16 @@
 # Overview
 
-This is an ERP Connect Pro application - a unified enterprise hub that integrates with multiple ERP systems (SAP, NetSuite, Dynamics 365, etc.) to provide real-time business intelligence through a centralized dashboard. The system features KPI monitoring, AI-powered data analysis, email automation, and WebSocket-based real-time updates.
+This is **Jeldi** - an enterprise ERP integration platform with a two-tier architecture:
+
+## Product Architecture
+**Overlay Layer** (Current Implementation): Unified enterprise dashboard that integrates with multiple ERP systems (SAP, NetSuite, Dynamics 365, etc.) to provide real-time business intelligence through a centralized dashboard. Features KPI monitoring, AI-powered data analysis, email automation, and WebSocket-based real-time updates.
+
+**Full ERP Integration Layer** (Future): Complete bidirectional ERP integration with:
+- Data source reliability verification and validation
+- Direct read/write capabilities within ERP systems 
+- In-app ERP data updates without leaving Jeldi
+- Role-based access control (project managers, finance, ops, etc.)
+- Real-time synchronization between Jeldi and ERP systems
 
 # User Preferences
 
