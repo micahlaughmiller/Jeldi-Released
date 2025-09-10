@@ -29,5 +29,23 @@
         "jeldibackend": {}
       }
     }
+  },
+  "production": {
+    "awscloudformation": {
+      "AuthRoleName": "amplify-jeldierp-production-6c5dc-authRole",
+      "UnauthRoleArn": "arn:aws:iam::537692431436:role/amplify-jeldierp-production-6c5dc-unauthRole",
+      "AuthRoleArn": "arn:aws:iam::537692431436:role/amplify-jeldierp-production-6c5dc-authRole",
+      "Region": "us-east-2",
+      "DeploymentBucketName": "amplify-jeldierp-production-6c5dc-deployment",
+      "UnauthRoleName": "amplify-jeldierp-production-6c5dc-unauthRole",
+      "StackName": "amplify-jeldierp-production-6c5dc",
+      "StackId": "arn:aws:cloudformation:us-east-2:537692431436:stack/amplify-jeldierp-production-6c5dc/78bf42b0-8e9f-11f0-8d14-0a2f978855db",
+      "AmplifyAppId": "d2jsflomjljwbg"
+    },
+    "categories": {
+      "function": {
+        "jeldibackend": {}
+      }
+    }
   }
 }
