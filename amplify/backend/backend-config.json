@@ -1,4 +1,11 @@
 {
+  "function": {
+    "jeldibackend": {
+      "build": true,
+      "providerPlugin": "awscloudformation",
+      "service": "Lambda"
+    }
+  },
   "hosting": {
     "S3AndCloudFront": {
       "providerPlugin": "awscloudformation",
