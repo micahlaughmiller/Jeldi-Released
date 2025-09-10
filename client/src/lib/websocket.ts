@@ -126,7 +126,17 @@ let wsClient: WebSocketClient | null = null;
 export function getWebSocketClient(): WebSocketClient {
   if (!wsClient) {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    // Handle Replit environment properly
+    let host = window.location.host;
+    if (host.includes(':undefined') || !host.includes(':')) {
+      // Use hostname without port for WebSocket connection
+      host = window.location.hostname + (window.location.port ? ':' + window.location.port : '');
+      // If still no port, use current page port or default
+      if (!window.location.port && window.location.hostname === 'localhost') {
+        host = window.location.hostname + ':5000';
+      }
+    }
+    const wsUrl = `${protocol}//${host}/ws`;
     wsClient = new WebSocketClient(wsUrl);
   }
   
