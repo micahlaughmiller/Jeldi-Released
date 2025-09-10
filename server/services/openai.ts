@@ -56,8 +56,7 @@ Respond in JSON format with the structure: { "response": "string", "insights": [
         { role: "user", content: userPrompt }
       ],
       response_format: { type: "json_object" },
-      temperature: 0.7,
-      max_tokens: 1000,
+      max_completion_tokens: 1000,
     });
 
     const result = JSON.parse(response.choices[0].message.content || "{}");
@@ -97,7 +96,7 @@ export async function generateKPIInsights(kpiData: Record<string, any>): Promise
         }
       ],
       response_format: { type: "json_object" },
-      temperature: 0.3,
+      max_completion_tokens: 500,
     });
 
     const result = JSON.parse(response.choices[0].message.content || "{}");
