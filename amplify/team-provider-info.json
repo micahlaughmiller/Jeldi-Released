@@ -23,6 +23,11 @@
       "StackName": "amplify-jeldierp-jeldiapp-99c81",
       "StackId": "arn:aws:cloudformation:us-east-2:537692431436:stack/amplify-jeldierp-jeldiapp-99c81/d7c9bbd0-8e9c-11f0-aea7-06bf6065421d",
       "AmplifyAppId": "d2jsflomjljwbg"
+    },
+    "categories": {
+      "function": {
+        "jeldibackend": {}
+      }
     }
   }
 }
