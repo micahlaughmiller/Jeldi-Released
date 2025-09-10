@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -220,6 +221,34 @@ export default function Login() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Demo Access Section */}
+        <div className="mt-8">
+          <Card className="bg-gradient-to-br from-primary/5 to-chart-4/5 border-primary/20">
+            <CardContent className="p-6 text-center">
+              <div className="flex justify-center mb-3">
+                <Badge variant="secondary" className="text-xs font-medium">
+                  No Registration Required
+                </Badge>
+              </div>
+              <h3 className="text-lg font-semibold mb-2">
+                Experience ERP Connect Pro Demo
+              </h3>
+              <p className="text-sm text-muted-foreground mb-4 max-w-sm mx-auto">
+                Explore our platform with realistic data from a $200M company over 90 days
+              </p>
+              <Button
+                onClick={() => setLocation("/demo")}
+                variant="outline"
+                className="w-full"
+                data-testid="button-view-demo"
+              >
+                <i className="fas fa-chart-line mr-2"></i>
+                View Live Demo
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );
