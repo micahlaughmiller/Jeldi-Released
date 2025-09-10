@@ -14,6 +14,29 @@ const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 // WebSocket clients tracking
 const wsClients = new Map<string, WebSocket>();
 
+// Helper function to broadcast ERP status updates
+async function broadcastERPStatusUpdate(userId: string) {
+  const wsClient = wsClients.get(userId);
+  if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+    try {
+      const systems = await erpService.getConnectedSystems(userId);
+      wsClient.send(JSON.stringify({
+        type: 'erp_status_update',
+        data: systems.map(system => ({
+          name: system.name,
+          displayName: system.displayName,
+          description: system.description,
+          isConnected: system.isConnected,
+          lastSync: system.lastSync,
+          status: system.isConnected ? "active" : "inactive"
+        }))
+      }));
+    } catch (error) {
+      console.error('Error broadcasting ERP status update:', error);
+    }
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication middleware
   const authenticateToken = async (req: any, res: any, next: any) => {
@@ -128,10 +151,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const connection = await erpService.handleOAuthCallback(code as string, state as string);
       
+      // Broadcast ERP status update via WebSocket
+      await broadcastERPStatusUpdate(connection.userId);
+      
       // Redirect to dashboard with success message
       res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard?connected=${connection.erpSystem}`);
     } catch (error) {
       res.status(400).json({ message: "OAuth callback failed", error: (error as Error).message });
+    }
+  });
+
+  app.delete("/api/erp/disconnect/:system", authenticateToken, async (req: any, res) => {
+    try {
+      const { system } = req.params;
+      await erpService.disconnectSystem(req.user.id, system);
+      
+      // Broadcast ERP status update via WebSocket
+      await broadcastERPStatusUpdate(req.user.id);
+      
+      res.json({ message: "System disconnected successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to disconnect system", error: (error as Error).message });
     }
   });
 

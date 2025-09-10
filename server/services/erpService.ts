@@ -274,6 +274,22 @@ export class ERPService {
 
     return aggregatedData;
   }
+
+  async disconnectSystem(userId: string, erpSystem: string): Promise<void> {
+    const connection = await storage.getErpConnection(userId, erpSystem);
+    if (!connection) {
+      throw new Error(`${erpSystem} connection not found`);
+    }
+
+    // Update connection to disconnected state
+    await storage.updateErpConnection(connection.id, {
+      isConnected: false,
+      accessToken: null,
+      refreshToken: null,
+      tokenExpiry: null,
+      lastSync: null
+    });
+  }
 }
 
 export const erpService = new ERPService();

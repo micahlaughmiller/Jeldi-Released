@@ -10,6 +10,8 @@ import EmailComposer from "@/components/modals/email-composer";
 import ERPConnections from "@/components/modals/erp-connections";
 import { useRealtimeData } from "@/hooks/use-realtime-data";
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface User {
   id: string;
@@ -43,6 +45,7 @@ export default function Dashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isERPModalOpen, setIsERPModalOpen] = useState(false);
+  const { toast } = useToast();
   
   // Real-time data hook
   const { kpiData, erpSystems, connectionStatus } = useRealtimeData();
@@ -54,7 +57,7 @@ export default function Dashboard() {
   });
 
   // Fetch ERP systems
-  const { data: systems = [] } = useQuery<ERPSystem[]>({
+  const { data: systems = [], refetch: refetchSystems } = useQuery<ERPSystem[]>({
     queryKey: ["/api/erp/systems"],
     enabled: !!user,
   });
@@ -76,6 +79,37 @@ export default function Dashboard() {
       setLocation("/login");
     }
   }, [setLocation]);
+
+  // Handle OAuth callback parameters
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const connectedSystem = urlParams.get('connected');
+    const emailConnected = urlParams.get('email_connected');
+    
+    if (connectedSystem) {
+      toast({
+        title: "ERP System Connected",
+        description: `Successfully connected to ${connectedSystem}!`,
+      });
+      
+      // Refresh ERP systems data
+      refetchSystems();
+      queryClient.invalidateQueries({ queryKey: ["/api/erp/systems"] });
+      
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    
+    if (emailConnected) {
+      toast({
+        title: "Email Provider Connected",
+        description: `Successfully connected to ${emailConnected}!`,
+      });
+      
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [toast, refetchSystems]);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
