@@ -1,20 +1,5 @@
 {
-  "api": {
-    "jeldierpapi": {
-      "dependsOn": [
-        {
-          "attributes": [
-            "Name",
-            "Arn"
-          ],
-          "category": "function",
-          "resourceName": "jeldierpbackend"
-        }
-      ],
-      "providerPlugin": "awscloudformation",
-      "service": "API Gateway"
-    }
-  },
+  "api": {},
   "function": {
     "jeldibackend": {
       "build": true,
