@@ -1,6 +1,6 @@
 export type AmplifyDependentResourcesAttributes = {
   "api": {
-    "jeldiapi": {
+    "jeldierpapi": {
       "ApiId": "string",
       "ApiName": "string",
       "RootUrl": "string"
@@ -8,6 +8,13 @@ export type AmplifyDependentResourcesAttributes = {
   },
   "function": {
     "jeldibackend": {
+      "Arn": "string",
+      "LambdaExecutionRole": "string",
+      "LambdaExecutionRoleArn": "string",
+      "Name": "string",
+      "Region": "string"
+    },
+    "jeldierpbackend": {
       "Arn": "string",
       "LambdaExecutionRole": "string",
       "LambdaExecutionRoleArn": "string",
