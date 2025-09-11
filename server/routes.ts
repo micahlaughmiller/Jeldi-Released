@@ -6,7 +6,7 @@ import { erpService } from "./services/erpService";
 import { emailService } from "./services/emailService";
 import { analyzeERPData, generateKPIInsights } from "./services/openai";
 import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema } from "@shared/schema";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import passport from "passport";
 import { OAuthService } from "./services/oauthService";
