@@ -3,6 +3,13 @@ export const API_BASE_URL = import.meta.env.PROD
   ? 'https://kpqqhqz2akdmklu23echtowfvq0bajsz.lambda-url.us-east-2.on.aws'
   : '';
 
+// Custom domain detection for future use
+export const isCustomDomain = () => {
+  if (typeof window === 'undefined') return false;
+  const hostname = window.location.hostname;
+  return hostname === 'demo.jeldi.app' || hostname === 'overlay.jeldi.app';
+};
+
 export function getApiUrl(endpoint: string): string {
   // Remove leading slash if present to avoid double slashes
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
