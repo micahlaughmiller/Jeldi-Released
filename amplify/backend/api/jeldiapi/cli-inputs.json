@@ -1,8 +1,8 @@
 {
   "version": 1,
   "paths": {
-    "/api/{proxy}": {
-      "name": "/api/{proxy}",
+    "/api/{proxy+}": {
+      "name": "/api/{proxy+}",
       "lambdaFunction": "jeldibackend",
       "permissions": {
         "setting": "open"
