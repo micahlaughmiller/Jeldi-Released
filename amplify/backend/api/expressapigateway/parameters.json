@@ -1,0 +1,4 @@
+{
+  "functionexpressapiName": "expressapi",
+  "functionexpressapiArn": "arn:aws:lambda:[region]:[account]:function:expressapi"
+}

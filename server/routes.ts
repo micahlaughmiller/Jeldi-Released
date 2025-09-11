@@ -41,7 +41,7 @@ async function broadcastERPStatusUpdate(userId: string) {
   }
 }
 
-export async function registerRoutes(app: Express): Promise<Server> {
+export async function registerRoutes(app: Express, options: { excludeWebSocket?: boolean } = {}): Promise<Server> {
   // Setup OAuth strategies
   OAuthService.setupStrategies();
   
@@ -531,79 +531,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const httpServer = createServer(app);
 
-  // WebSocket server setup
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  // WebSocket server setup (skip in Lambda environment)
+  if (!options.excludeWebSocket) {
+    const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
-  wss.on('connection', (ws, req) => {
-    console.log('WebSocket client connected');
-    
-    ws.on('message', async (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        
-        if (message.type === 'auth' && message.token) {
-          try {
-            const decoded = jwt.verify(message.token, getJwtSecret()) as any;
-            const user = await storage.getUser(decoded.userId);
-            if (user) {
-              wsClients.set(user.id, ws);
-              ws.send(JSON.stringify({ type: 'auth_success', userId: user.id }));
-            }
-          } catch (error) {
-            ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid token' }));
-          }
-        }
-      } catch (error) {
-        console.error('WebSocket message error:', error);
-      }
-    });
-
-    ws.on('close', () => {
-      // Remove client from tracking
-      for (const [userId, client] of Array.from(wsClients.entries())) {
-        if (client === ws) {
-          wsClients.delete(userId);
-          break;
-        }
-      }
-    });
-  });
-
-  // Real-time KPI updates (simulate with interval)
-  setInterval(async () => {
-    for (const [userId, ws] of Array.from(wsClients.entries())) {
-      if (ws.readyState === WebSocket.OPEN) {
+    wss.on('connection', (ws, req) => {
+      console.log('WebSocket client connected');
+      
+      ws.on('message', async (data) => {
         try {
-          // Fetch latest KPI data
-          const kpis = await storage.getKpiConfigurations(userId);
-          const kpiUpdates = [];
+          const message = JSON.parse(data.toString());
           
-          for (const kpi of kpis.slice(0, 5)) { // Limit to 5 KPIs
-            const latestData = await storage.getLatestKpiData(kpi.id);
-            if (latestData) {
-              kpiUpdates.push({
-                id: kpi.id,
-                name: kpi.name,
-                type: kpi.type,
-                value: latestData.value,
-                change: latestData.change,
-                timestamp: latestData.timestamp
-              });
+          if (message.type === 'auth' && message.token) {
+            try {
+              const decoded = jwt.verify(message.token, getJwtSecret()) as any;
+              const user = await storage.getUser(decoded.userId);
+              if (user) {
+                wsClients.set(user.id, ws);
+                ws.send(JSON.stringify({ type: 'auth_success', userId: user.id }));
+              }
+            } catch (error) {
+              ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid token' }));
             }
-          }
-          
-          if (kpiUpdates.length > 0) {
-            ws.send(JSON.stringify({
-              type: 'kpi_update',
-              data: kpiUpdates
-            }));
           }
         } catch (error) {
-          console.error('Error sending KPI updates:', error);
+          console.error('WebSocket message error:', error);
+        }
+      });
+
+      ws.on('close', () => {
+        // Remove client from tracking
+        for (const [userId, client] of Array.from(wsClients.entries())) {
+          if (client === ws) {
+            wsClients.delete(userId);
+            break;
+          }
+        }
+      });
+    });
+
+    // Real-time KPI updates (simulate with interval)
+    setInterval(async () => {
+      for (const [userId, ws] of Array.from(wsClients.entries())) {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            // Fetch latest KPI data
+            const kpis = await storage.getKpiConfigurations(userId);
+            const kpiUpdates = [];
+            
+            for (const kpi of kpis.slice(0, 5)) { // Limit to 5 KPIs
+              const latestData = await storage.getLatestKpiData(kpi.id);
+              if (latestData) {
+                kpiUpdates.push({
+                  id: kpi.id,
+                  name: kpi.name,
+                  type: kpi.type,
+                  value: latestData.value,
+                  change: latestData.change,
+                  timestamp: latestData.timestamp
+                });
+              }
+            }
+            
+            if (kpiUpdates.length > 0) {
+              ws.send(JSON.stringify({
+                type: 'kpi_update',
+                data: kpiUpdates
+              }));
+            }
+          } catch (error) {
+            console.error('Error sending KPI updates:', error);
+          }
         }
       }
-    }
-  }, 30000); // Update every 30 seconds
+    }, 30000); // Update every 30 seconds
+  }
 
   return httpServer;
 }

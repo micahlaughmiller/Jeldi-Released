@@ -1,0 +1,100 @@
+{
+  "/home/runner/workspace/serverless.yml": {
+    "versionFramework": "4.18.2",
+    "servicePath": "/home/runner/workspace/serverless.yml",
+    "serviceConfigFileName": "serverless.yml",
+    "service": {
+      "service": "jeldi-backend",
+      "provider": {
+        "name": "aws",
+        "runtime": "nodejs18.x",
+        "region": "us-east-2",
+        "stage": "production",
+        "environment": {
+          "NODE_ENV": "production",
+          "JWT_SECRET": "<REDACTED>",
+          "DATABASE_URL": "${env:DATABASE_URL}",
+          "OPENAI_API_KEY": "<REDACTED>"
+        },
+        "iamRoleStatements": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "secretsmanager:GetSecretValue"
+            ],
+            "Resource": [
+              "*"
+            ]
+          }
+        ]
+      },
+      "functions": {
+        "api": {
+          "handler": "dist/lambda.handler",
+          "timeout": 25,
+          "events": [
+            {
+              "http": {
+                "path": "/",
+                "method": "ANY",
+                "cors": true
+              }
+            },
+            {
+              "http": {
+                "path": "/{proxy+}",
+                "method": "ANY",
+                "cors": true
+              }
+            }
+          ]
+        }
+      },
+      "plugins": [
+        "serverless-offline"
+      ],
+      "custom": {
+        "serverless-offline": {
+          "httpPort": 3001
+        }
+      }
+    },
+    "provider": {
+      "name": "aws",
+      "runtime": "nodejs18.x",
+      "region": "us-east-2",
+      "stage": "production",
+      "environment": {
+        "NODE_ENV": "production",
+        "JWT_SECRET": "<REDACTED>",
+        "DATABASE_URL": "${env:DATABASE_URL}",
+        "OPENAI_API_KEY": "<REDACTED>"
+      },
+      "iamRoleStatements": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "secretsmanager:GetSecretValue"
+          ],
+          "Resource": [
+            "*"
+          ]
+        }
+      ]
+    },
+    "error": {
+      "message": "You must sign in or use a license key with Serverless Framework V.4 and later versions. Please use \"serverless login\".",
+      "stack": "Error: You must sign in or use a license key with Serverless Framework V.4 and later versions. Please use \"serverless login\".\n    at Authentication.getAuthenticatedData (file:///home/runner/.serverless/releases/4.18.2/package/dist/sf-core.js:806:10899)\n    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)\n    at async Authentication.authenticate (file:///home/runner/.serverless/releases/4.18.2/package/dist/sf-core.js:808:22245)\n    at async TraditionalRunner.resolveVariablesAndAuthenticate (file:///home/runner/.serverless/releases/4.18.2/package/dist/sf-core.js:812:2379)\n    at async TraditionalRunner.run (file:///home/runner/.serverless/releases/4.18.2/package/dist/sf-core.js:1428:27914)\n    at async route (file:///home/runner/.serverless/releases/4.18.2/package/dist/sf-core.js:1603:2878)\n    at async Object.run (file:///home/runner/.serverless/releases/4.18.2/package/dist/sf-core.js:1604:3661)\n    at async run2 (file:///home/runner/.serverless/releases/4.18.2/package/dist/sf-core.js:1604:4815)"
+    },
+    "serviceRawFile": "service: jeldi-backend\n\nprovider:\n  name: aws\n  runtime: nodejs18.x\n  region: us-east-2\n  stage: production\n  environment:\n    NODE_ENV: production\n    JWT_SECRET: ${env:JWT_SECRET}\n    DATABASE_URL: ${env:DATABASE_URL}\n    OPENAI_API_KEY: ${env:OPENAI_API_KEY}\n  iamRoleStatements:\n    - Effect: Allow\n      Action:\n        - secretsmanager:GetSecretValue\n      Resource: \n        - \"*\"\n\nfunctions:\n  api:\n    handler: dist/lambda.handler\n    timeout: 25\n    events:\n      - http:\n          path: /\n          method: ANY\n          cors: true\n      - http:\n          path: /{proxy+}\n          method: ANY\n          cors: true\n\nplugins:\n  - serverless-offline\n\ncustom:\n  serverless-offline:\n    httpPort: 3001",
+    "command": [
+      "deploy"
+    ],
+    "options": {},
+    "serviceProviderAwsCfStackId": null,
+    "serviceProviderAwsCfStackCreated": null,
+    "serviceProviderAwsCfStackUpdated": null,
+    "serviceProviderAwsCfStackStatus": null,
+    "serviceProviderAwsCfStackOutputs": null
+  }
+}

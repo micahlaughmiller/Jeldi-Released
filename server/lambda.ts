@@ -1,0 +1,109 @@
+import express from "express";
+import serverless from "serverless-http";
+import type { APIGatewayProxyHandler, APIGatewayProxyEvent, Context } from "aws-lambda";
+import { registerRoutes } from "./routes";
+import { enforceEnvironmentValidation } from "./env-validation";
+
+// Enforce environment validation before starting application
+enforceEnvironmentValidation();
+
+// Create Express app for Lambda
+const app = express();
+
+// Trust proxy for Lambda Function URL / CloudFront
+app.set('trust proxy', true);
+
+// Basic middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+// Request logging middleware (without response body to prevent PII leakage)
+app.use((req, res, next) => {
+  const start = Date.now();
+  const path = req.path;
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (path.startsWith("/api")) {
+      console.log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
+    }
+  });
+
+  next();
+});
+
+// One-time initialization for Lambda cold starts
+let isInitialized = false;
+let initializationPromise: Promise<void> | null = null;
+
+async function initializeAppOnce() {
+  if (isInitialized) {
+    return;
+  }
+  
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+
+  initializationPromise = (async () => {
+    try {
+      // Register routes but exclude WebSocket functionality
+      const httpServer = await registerRoutes(app, { excludeWebSocket: true });
+
+      // Error handling middleware
+      app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+        const status = err.status || err.statusCode || 500;
+        const message = err.message || "Internal Server Error";
+
+        res.status(status).json({ message });
+        console.error(err);
+      });
+
+      // Health check endpoint
+      app.get("/health", (req, res) => {
+        res.json({ 
+          status: "healthy", 
+          timestamp: new Date().toISOString(),
+          environment: process.env.NODE_ENV || "development"
+        });
+      });
+
+      isInitialized = true;
+      console.log("Lambda app initialized successfully");
+    } catch (error) {
+      console.error("Failed to initialize Lambda app:", error);
+      initializationPromise = null; // Allow retry on next invocation
+      throw error;
+    }
+  })();
+
+  return initializationPromise;
+}
+
+// Create serverless handler
+const serverlessHandler = serverless(app, {
+  binary: ['image/*', 'application/pdf', 'application/octet-stream'],
+  request(request: any, event: APIGatewayProxyEvent, context: Context) {
+    // Add AWS Lambda context to request
+    request.awsEvent = event;
+    request.awsContext = context;
+  },
+  response(response: any, event: APIGatewayProxyEvent, context: Context) {
+    // Handle CORS - restrict to CloudFront domain
+    const allowedOrigin = 'https://d2k9wjgsy12ugk.cloudfront.net';
+    response.headers = response.headers || {};
+    response.headers['Access-Control-Allow-Origin'] = allowedOrigin;
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,Accept,Origin,X-Requested-With';
+    response.headers['Access-Control-Allow-Methods'] = 'GET,HEAD,POST,PUT,DELETE,OPTIONS,PATCH';
+    response.headers['Access-Control-Allow-Credentials'] = 'false';
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+    response.headers['Pragma'] = 'no-cache';
+    response.headers['Expires'] = '0';
+  }
+}) as unknown as APIGatewayProxyHandler;
+
+// Export wrapper handler that ensures initialization before processing requests
+export const handler: APIGatewayProxyHandler = async (event, context, callback) => {
+  await initializeAppOnce();
+  return (serverlessHandler as any)(event, context, callback);
+};
