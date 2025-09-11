@@ -1,17 +1,6 @@
 {
   "api": {},
-  "function": {
-    "jeldibackend": {
-      "build": true,
-      "providerPlugin": "awscloudformation",
-      "service": "Lambda"
-    },
-    "jeldierpbackend": {
-      "build": true,
-      "providerPlugin": "awscloudformation",
-      "service": "Lambda"
-    }
-  },
+  "function": {},
   "hosting": {
     "S3AndCloudFront": {
       "providerPlugin": "awscloudformation",
