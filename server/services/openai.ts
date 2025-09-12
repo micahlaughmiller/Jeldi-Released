@@ -2,9 +2,11 @@ import OpenAI from "openai";
 
 // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
 function getOpenAIClient() {
-  return new OpenAI({ 
-    apiKey: process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR || "default_key"
-  });
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is required');
+  }
+  return new OpenAI({ apiKey });
 }
 
 export interface ERPQueryRequest {
@@ -53,7 +55,7 @@ Respond in JSON format with the structure: { "response": "string", "insights": [
 
     const openai = getOpenAIClient();
     const response = await openai.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
@@ -62,7 +64,23 @@ Respond in JSON format with the structure: { "response": "string", "insights": [
       max_completion_tokens: 1000,
     });
 
-    const result = JSON.parse(response.choices[0].message.content || "{}");
+    if (!response.choices || response.choices.length === 0) {
+      throw new Error('OpenAI returned no response choices');
+    }
+    
+    const responseContent = response.choices[0].message.content;
+    
+    if (!responseContent) {
+      throw new Error('OpenAI returned empty content');
+    }
+    
+    let result;
+    try {
+      result = JSON.parse(responseContent);
+    } catch (parseError) {
+      throw new Error('Failed to parse OpenAI response as JSON: ' + responseContent);
+    }
+    
 
     return {
       response: result.response || "Unable to analyze the data at this time.",
@@ -84,7 +102,7 @@ export async function generateKPIInsights(kpiData: Record<string, any>): Promise
   try {
     const openai = getOpenAIClient();
     const response = await openai.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",

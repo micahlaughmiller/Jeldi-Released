@@ -467,11 +467,22 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const erpData = await erpService.aggregateERPData(req.user.id);
       
       // Send to ChatGPT for analysis
-      const response = await analyzeERPData({
-        query,
-        erpData,
-        userId: req.user.id
-      });
+      let response;
+      try {
+        response = await analyzeERPData({
+          query,
+          erpData,
+          userId: req.user.id
+        });
+      } catch (aiError) {
+        console.error('AI analysis failed:', aiError);
+        response = {
+          response: "AI analysis temporarily unavailable: " + (aiError as Error).message,
+          insights: [],
+          recommendations: [],
+          dataUsed: []
+        };
+      }
       
       // Save chat history
       await storage.createChatHistory({

@@ -261,18 +261,118 @@ export class ERPService {
     
     const aggregatedData: Record<string, any> = {};
 
-    for (const connection of connectedSystems) {
-      try {
-        // Fetch basic data from each connected ERP
-        const data = await this.fetchERPData(userId, connection.erpSystem, "/summary");
-        aggregatedData[connection.erpSystem] = data;
-      } catch (error) {
-        console.error(`Failed to fetch data from ${connection.erpSystem}:`, error);
-        aggregatedData[connection.erpSystem] = { error: (error as Error).message };
+    // If user has connected systems, fetch real data
+    if (connectedSystems.length > 0) {
+      for (const connection of connectedSystems) {
+        try {
+          // Fetch basic data from each connected ERP
+          const data = await this.fetchERPData(userId, connection.erpSystem, "/summary");
+          aggregatedData[connection.erpSystem] = data;
+        } catch (error) {
+          console.error(`Failed to fetch data from ${connection.erpSystem}:`, error);
+          aggregatedData[connection.erpSystem] = { error: (error as Error).message };
+        }
       }
+    } else {
+      // Provide demo data for new users to analyze
+      aggregatedData.demo = this.getDemoERPData();
     }
 
     return aggregatedData;
+  }
+
+  private getDemoERPData(): Record<string, any> {
+    return {
+      company: {
+        name: "TechCorp Industries",
+        size: "Large Enterprise",
+        revenue: "$200M annually",
+        employees: 2800,
+        industry: "Technology Manufacturing"
+      },
+      financial: {
+        monthlyRevenue: {
+          current: 16700000, // $16.7M
+          change: 12.5,
+          currency: "USD",
+          period: "Current Month"
+        },
+        quarterlyRevenue: {
+          q1: 48200000,
+          q2: 52100000, 
+          q3: 49800000,
+          q4_projected: 55000000,
+          currency: "USD"
+        },
+        profitMargin: {
+          current: 18.3,
+          target: 20.0,
+          trend: "improving"
+        },
+        expenses: {
+          operational: 13650000,
+          salaries: 8900000,
+          marketing: 2100000,
+          rnd: 4200000
+        }
+      },
+      operations: {
+        activeOrders: {
+          count: 2847,
+          change: 8.2,
+          totalValue: 12400000,
+          avgOrderValue: 4354
+        },
+        inventory: {
+          fillRate: 94.2,
+          change: -2.1,
+          totalItems: 15680,
+          lowStockItems: 234,
+          overstockItems: 89
+        },
+        production: {
+          efficiency: 91.3,
+          change: 6.4,
+          unitsProduced: 45670,
+          defectRate: 0.8,
+          onTimeDelivery: 96.5
+        }
+      },
+      systems: {
+        performance: {
+          uptime: 98.8,
+          change: 15.7,
+          avgResponseTime: 245,
+          errorRate: 0.03
+        },
+        integrations: [
+          {
+            system: "SAP S/4HANA",
+            status: "active",
+            lastSync: new Date(Date.now() - 2 * 60 * 1000),
+            dataPoints: 15680
+          },
+          {
+            system: "Oracle NetSuite", 
+            status: "active",
+            lastSync: new Date(Date.now() - 5 * 60 * 1000),
+            dataPoints: 8934
+          },
+          {
+            system: "Microsoft Dynamics 365",
+            status: "active", 
+            lastSync: new Date(Date.now() - 8 * 60 * 1000),
+            dataPoints: 12456
+          }
+        ]
+      },
+      trends: {
+        salesGrowth: "12.5% month-over-month increase",
+        inventoryOptimization: "Slight decrease in fill rate, investigate supply chain",
+        systemPerformance: "Significant improvement in uptime and response times",
+        operationalEfficiency: "Strong gains in production efficiency"
+      }
+    };
   }
 
   async disconnectSystem(userId: string, erpSystem: string): Promise<void> {
