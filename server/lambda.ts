@@ -1,5 +1,5 @@
-import express from "express";
-import serverless from "serverless-http";
+const express = require("express");
+const serverless = require("serverless-http");
 import type { APIGatewayProxyHandler, APIGatewayProxyEvent, Context } from "aws-lambda";
 import { registerRoutes } from "./routes";
 import { enforceEnvironmentValidation } from "./env-validation";
