@@ -22,7 +22,8 @@ app.use((req: express.Request, res: express.Response, next: express.NextFunction
   const allowedOrigins = [
     'https://d2k9wjgsy12ugk.cloudfront.net',  // Original CloudFront domain
     'https://demo.jeldi.app',                 // Custom domain for main app
-    'https://overlay.jeldi.app'               // Custom domain for AI overlay
+    'https://overlay.jeldi.app',              // Custom domain for AI overlay
+    'null'                                    // Allow file:// protocol for testing
   ];
   
   const origin = req.headers.origin;
@@ -30,9 +31,12 @@ app.use((req: express.Request, res: express.Response, next: express.NextFunction
   // Set Vary: Origin header for proper CloudFront caching
   res.setHeader('Vary', 'Origin');
   
-  // Only set Access-Control-Allow-Origin if origin is explicitly allowed
+  // Always set CORS headers to be more permissive
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    // Fallback to wildcard for debugging
+    res.setHeader('Access-Control-Allow-Origin', '*');
   }
   
   // Set other CORS headers
