@@ -5,12 +5,13 @@ import { storage } from "./storage";
 import { erpService } from "./services/erpService";
 import { emailService } from "./services/emailService";
 import { analyzeERPData, generateKPIInsights } from "./services/openai";
-import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema, updateUserPreferencesSchema, insertUserPreferencesSchema } from "@shared/schema";
+import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema, updateUserPreferencesSchema, insertUserPreferencesSchema, insertRoleSchema, updateRoleSchema, roleAssignmentSchema, roleRevocationSchema, insertPermissionSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import passport from "passport";
 import { OAuthService } from "./services/oauthService";
 import { getJwtSecret } from "./env-validation";
+import { RBACService, AuthenticatedRequest, loadUserPermissions, requirePermission, requireRole, requireAdmin, authWithPermissions } from "./services/rbac";
 
 // JWT_SECRET accessed at runtime, not import-time
 const getJwtSecretAtRuntime = () => getJwtSecret();
@@ -47,6 +48,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   
   // Initialize passport middleware
   app.use(passport.initialize());
+  
+  // Initialize default RBAC roles and permissions
+  try {
+    await RBACService.initializeDefaultRoles();
+    console.log('RBAC system initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize RBAC system:', error);
+  }
   
   // Cleanup expired OAuth sessions periodically
   setInterval(async () => {
@@ -439,7 +448,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   );
 
   // ERP Connection routes
-  app.get("/api/erp/systems", authenticateToken, async (req: any, res) => {
+  app.get("/api/erp/systems", authenticateToken, requirePermission("erp_connections", "read"), async (req: any, res) => {
     try {
       const systems = await erpService.getConnectedSystems(req.user.id);
       res.json(systems);
@@ -448,7 +457,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/erp/connect/:system", authenticateToken, async (req: any, res) => {
+  app.post("/api/erp/connect/:system", authenticateToken, requirePermission("erp_connections", "create"), async (req: any, res) => {
     try {
       const { system } = req.params;
       const redirectUri = process.env.OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/erp/callback`;
@@ -480,7 +489,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.delete("/api/erp/disconnect/:system", authenticateToken, async (req: any, res) => {
+  app.delete("/api/erp/disconnect/:system", authenticateToken, requirePermission("erp_connections", "manage"), async (req: any, res) => {
     try {
       const { system } = req.params;
       await erpService.disconnectSystem(req.user.id, system);
@@ -494,7 +503,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.get("/api/erp/data", authenticateToken, async (req: any, res) => {
+  app.get("/api/erp/data", authenticateToken, requirePermission("erp_connections", "read"), async (req: any, res) => {
     try {
       const data = await erpService.aggregateERPData(req.user.id);
       res.json(data);
@@ -503,8 +512,208 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
+  // RBAC routes
+  // Get current user's roles and permissions
+  app.get("/api/rbac/me", authenticateToken, loadUserPermissions, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userWithRoles = await RBACService.getUserWithPermissions(req.user!.id);
+      if (!userWithRoles) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json({
+        user: req.user,
+        roles: userWithRoles.userRoles.map(ur => ur.role),
+        permissions: userWithRoles.permissions,
+        roleNames: userWithRoles.userRoles.map(ur => ur.role.name)
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch user roles", error: (error as Error).message });
+    }
+  });
+
+  // Get all available roles (admin only)
+  app.get("/api/rbac/roles", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const roles = await storage.getRoles();
+      res.json(roles);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch roles", error: (error as Error).message });
+    }
+  });
+
+  // Get all available permissions (admin only)
+  app.get("/api/rbac/permissions", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const permissions = await storage.getPermissions();
+      const permissionsByCategory = permissions.reduce((acc, permission) => {
+        if (!acc[permission.category]) {
+          acc[permission.category] = [];
+        }
+        acc[permission.category].push(permission);
+        return acc;
+      }, {} as Record<string, typeof permissions>);
+      
+      res.json({
+        permissions,
+        byCategory: permissionsByCategory,
+        categories: Object.keys(permissionsByCategory)
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch permissions", error: (error as Error).message });
+    }
+  });
+
+  // Get all users with their roles (admin only)
+  app.get("/api/rbac/users", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      // This would need a new storage method to get all users with roles
+      // For now, return basic user info
+      res.json({ message: "User management endpoint - implementation needed" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch users", error: (error as Error).message });
+    }
+  });
+
+  // Assign role to user (admin only)
+  app.post("/api/rbac/assign-role", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { userId, roleId } = roleAssignmentSchema.parse(req.body);
+      
+      const userRole = await storage.assignRoleToUser(userId, roleId, req.user!.id);
+      
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "role_assigned",
+        resource: "users",
+        resourceId: userId,
+        oldValue: null,
+        newValue: { roleId, assignedBy: req.user!.id },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.json({ message: "Role assigned successfully", userRole });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to assign role", error: (error as Error).message });
+    }
+  });
+
+  // Revoke role from user (admin only)
+  app.delete("/api/rbac/revoke-role", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { userId, roleId } = roleRevocationSchema.parse(req.body);
+      
+      const success = await storage.revokeRoleFromUser(userId, roleId);
+      
+      if (success) {
+        await RBACService.logAuditEvent({
+          userId: req.user!.id,
+          action: "role_revoked",
+          resource: "users",
+          resourceId: userId,
+          oldValue: { roleId },
+          newValue: null,
+          ipAddress: req.ip,
+          userAgent: req.get("User-Agent") || null,
+        });
+
+        res.json({ message: "Role revoked successfully" });
+      } else {
+        res.status(404).json({ message: "Role assignment not found" });
+      }
+    } catch (error) {
+      res.status(400).json({ message: "Failed to revoke role", error: (error as Error).message });
+    }
+  });
+
+  // Check specific permission (authenticated users)
+  app.post("/api/rbac/check-permission", authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { resource, action } = req.body;
+      
+      const hasPermission = await RBACService.hasPermission(req.user!.id, resource, action);
+      
+      res.json({ 
+        hasPermission,
+        permission: `${resource}.${action}`,
+        userId: req.user!.id
+      });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to check permission", error: (error as Error).message });
+    }
+  });
+
+  // Get audit logs (admin only)
+  app.get("/api/rbac/audit-logs", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { userId, limit } = req.query;
+      const auditLogs = await storage.getAuditLogs(
+        userId as string | undefined, 
+        limit ? parseInt(limit as string) : 100
+      );
+      
+      res.json(auditLogs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch audit logs", error: (error as Error).message });
+    }
+  });
+
+  // Create new role (admin only)
+  app.post("/api/rbac/roles", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const roleData = insertRoleSchema.parse(req.body);
+      const newRole = await storage.createRole(roleData);
+      
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "role_created",
+        resource: "roles",
+        resourceId: newRole.id,
+        oldValue: null,
+        newValue: roleData,
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.status(201).json(newRole);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to create role", error: (error as Error).message });
+    }
+  });
+
+  // Update role (admin only)
+  app.put("/api/rbac/roles/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const updates = updateRoleSchema.parse(req.body);
+      
+      const existingRole = await storage.getRole(id);
+      const updatedRole = await storage.updateRole(id, updates);
+      
+      if (updatedRole) {
+        await RBACService.logAuditEvent({
+          userId: req.user!.id,
+          action: "role_updated",
+          resource: "roles",
+          resourceId: id,
+          oldValue: existingRole,
+          newValue: updates,
+          ipAddress: req.ip,
+          userAgent: req.get("User-Agent") || null,
+        });
+
+        res.json(updatedRole);
+      } else {
+        res.status(404).json({ message: "Role not found" });
+      }
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update role", error: (error as Error).message });
+    }
+  });
+
   // KPI routes
-  app.get("/api/kpis", authenticateToken, async (req: any, res) => {
+  app.get("/api/kpis", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
     try {
       const kpis = await storage.getKpiConfigurations(req.user.id);
       const kpisWithData = await Promise.all(
@@ -519,7 +728,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/kpis", authenticateToken, async (req: any, res) => {
+  app.post("/api/kpis", authenticateToken, requirePermission("kpis", "create"), async (req: any, res) => {
     try {
       const kpiData = insertKpiConfigurationSchema.parse({
         ...req.body,
@@ -533,7 +742,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.put("/api/kpis/:id", authenticateToken, async (req: any, res) => {
+  app.put("/api/kpis/:id", authenticateToken, requirePermission("kpis", "update"), async (req: any, res) => {
     try {
       const { id } = req.params;
       const updates = req.body;
@@ -549,7 +758,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.delete("/api/kpis/:id", authenticateToken, async (req: any, res) => {
+  app.delete("/api/kpis/:id", authenticateToken, requirePermission("kpis", "delete"), async (req: any, res) => {
     try {
       const { id } = req.params;
       const success = await storage.deleteKpiConfiguration(id);
@@ -565,7 +774,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // Email routes
-  app.get("/api/email/providers", authenticateToken, async (req: any, res) => {
+  app.get("/api/email/providers", authenticateToken, requirePermission("email", "manage"), async (req: any, res) => {
     try {
       const configurations = await emailService.getEmailConfigurations(req.user.id);
       
@@ -584,7 +793,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.get("/api/email/status", authenticateToken, async (req: any, res) => {
+  app.get("/api/email/status", authenticateToken, requirePermission("email", "manage"), async (req: any, res) => {
     try {
       const outlookStatus = await emailService.checkOutlookConnection();
       const configurations = await emailService.getEmailConfigurations(req.user.id);
@@ -602,7 +811,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/email/connect/:provider", authenticateToken, async (req: any, res) => {
+  app.post("/api/email/connect/:provider", authenticateToken, requirePermission("email", "manage"), async (req: any, res) => {
     try {
       // Validate provider parameter with Zod
       const { provider } = emailProviderParamsSchema.parse(req.params);
@@ -718,7 +927,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/email/send", authenticateToken, async (req: any, res) => {
+  app.post("/api/email/send", authenticateToken, requirePermission("email", "send"), async (req: any, res) => {
     try {
       // Secure input validation with Zod schemas
       const emailRequest = emailSendRequestSchema.parse(req.body);
@@ -800,7 +1009,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // Email templates endpoint for better API design
-  app.get("/api/email/templates", authenticateToken, async (req: any, res) => {
+  app.get("/api/email/templates", authenticateToken, requirePermission("email", "send"), async (req: any, res) => {
     try {
       const templates = emailService.getEmailTemplates();
       res.json({ 
@@ -817,7 +1026,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // ChatGPT routes (Legacy - creates default conversation)
-  app.post("/api/chat/query", authenticateToken, async (req: any, res) => {
+  app.post("/api/chat/query", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const { query } = req.body;
       
@@ -883,7 +1092,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.get("/api/chat/history", authenticateToken, async (req: any, res) => {
+  app.get("/api/chat/history", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const history = await storage.getChatHistory(req.user.id);
       res.json(history);
@@ -893,7 +1102,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // Conversation Management Routes
-  app.get("/api/conversations", authenticateToken, async (req: any, res) => {
+  app.get("/api/conversations", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 50;
       const conversations = await storage.getConversations(req.user.id, limit);
@@ -903,7 +1112,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.get("/api/conversations/:id", authenticateToken, async (req: any, res) => {
+  app.get("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const conversation = await storage.getConversation(req.params.id);
       if (!conversation) {
@@ -922,7 +1131,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/conversations", authenticateToken, async (req: any, res) => {
+  app.post("/api/conversations", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const { title, description } = req.body;
       if (!title) {
@@ -941,7 +1150,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.put("/api/conversations/:id", authenticateToken, async (req: any, res) => {
+  app.put("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const conversation = await storage.getConversation(req.params.id);
       if (!conversation) {
@@ -967,7 +1176,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.delete("/api/conversations/:id", authenticateToken, async (req: any, res) => {
+  app.delete("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const conversation = await storage.getConversation(req.params.id);
       if (!conversation) {
@@ -991,7 +1200,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // Enhanced Chat with Conversation Support
-  app.post("/api/chat/conversations/:id/message", authenticateToken, async (req: any, res) => {
+  app.post("/api/chat/conversations/:id/message", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const { query } = req.body;
       const conversationId = req.params.id;
@@ -1064,7 +1273,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // Query Templates Routes
-  app.get("/api/query-templates", authenticateToken, async (req: any, res) => {
+  app.get("/api/query-templates", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const category = req.query.category as string;
       const systemTemplates = await storage.getQueryTemplates(category);
@@ -1079,7 +1288,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/query-templates", authenticateToken, async (req: any, res) => {
+  app.post("/api/query-templates", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const { name, description, query, category, icon } = req.body;
       
@@ -1103,7 +1312,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/query-templates/:id/use", authenticateToken, async (req: any, res) => {
+  app.post("/api/query-templates/:id/use", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       await storage.updateQueryTemplateUsage(req.params.id);
       res.json({ success: true });
@@ -1113,7 +1322,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // Favorite Queries Routes
-  app.get("/api/favorite-queries", authenticateToken, async (req: any, res) => {
+  app.get("/api/favorite-queries", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const category = req.query.category as string;
       const favorites = await storage.getFavoriteQueries(req.user.id, category);
@@ -1123,7 +1332,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/favorite-queries", authenticateToken, async (req: any, res) => {
+  app.post("/api/favorite-queries", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const { query, title, description, category } = req.body;
       
@@ -1145,7 +1354,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.delete("/api/favorite-queries/:id", authenticateToken, async (req: any, res) => {
+  app.delete("/api/favorite-queries/:id", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       const deleted = await storage.deleteFavoriteQuery(req.params.id);
       if (deleted) {
@@ -1158,7 +1367,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.post("/api/favorite-queries/:id/use", authenticateToken, async (req: any, res) => {
+  app.post("/api/favorite-queries/:id/use", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
     try {
       await storage.updateFavoriteQueryUsage(req.params.id);
       res.json({ success: true });
@@ -1168,7 +1377,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // KPI Insights route
-  app.get("/api/insights", authenticateToken, async (req: any, res) => {
+  app.get("/api/insights", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
     try {
       const kpis = await storage.getKpiConfigurations(req.user.id);
       const kpiData: Record<string, any> = {};
@@ -1192,7 +1401,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
 
   // Real-time polling endpoints for Lambda compatibility
-  app.get("/api/realtime/kpi-updates", authenticateToken, async (req: any, res) => {
+  app.get("/api/realtime/kpi-updates", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
     try {
       // Fetch latest KPI data (same logic as WebSocket implementation)
       const kpis = await storage.getKpiConfigurations(req.user.id);
@@ -1225,7 +1434,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.get("/api/realtime/erp-status", authenticateToken, async (req: any, res) => {
+  app.get("/api/realtime/erp-status", authenticateToken, requirePermission("erp_connections", "read"), async (req: any, res) => {
     try {
       // Fetch ERP systems status (same logic as WebSocket implementation)
       const systems = await erpService.getConnectedSystems(req.user.id);
@@ -1251,7 +1460,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  app.get("/api/realtime/insights", authenticateToken, async (req: any, res) => {
+  app.get("/api/realtime/insights", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
     try {
       // Generate insights for real-time updates
       const kpis = await storage.getKpiConfigurations(req.user.id);

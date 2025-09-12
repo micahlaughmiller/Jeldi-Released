@@ -97,6 +97,20 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
           </a>
         </Link>
         
+        <Link href="/admin/roles">
+          <a 
+            className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+              location === "/admin/roles" 
+                ? "bg-primary text-primary-foreground" 
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            }`}
+            data-testid="nav-role-management"
+          >
+            <i className="fas fa-users-cog w-4"></i>
+            <span>Role Management</span>
+          </a>
+        </Link>
+        
         <Link href="/settings">
           <a 
             className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${

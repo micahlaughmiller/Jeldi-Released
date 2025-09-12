@@ -3,6 +3,7 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { PermissionProvider } from "@/hooks/use-permissions";
 import Dashboard from "@/pages/dashboard";
 import Login from "@/pages/login";
 import EmailCenter from "@/pages/email-center";
@@ -10,6 +11,7 @@ import DemoPage from "@/pages/demo";
 import Settings from "@/pages/settings";
 import AIAssistant from "@/pages/ai-assistant";
 import NotFound from "@/pages/not-found";
+import RoleManagement from "@/pages/role-management";
 
 function Router() {
   return (
@@ -22,6 +24,7 @@ function Router() {
       <Route path="/ai-assistant" component={AIAssistant} />
       <Route path="/assistant" component={AIAssistant} />
       <Route path="/settings" component={Settings} />
+      <Route path="/admin/roles" component={RoleManagement} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -30,10 +33,12 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
+      <PermissionProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Router />
+        </TooltipProvider>
+      </PermissionProvider>
     </QueryClientProvider>
   );
 }

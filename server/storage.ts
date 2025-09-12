@@ -1,12 +1,15 @@
 import { 
   users, erpConnections, kpiConfigurations, kpiData, emailConfigurations, chatHistory, oauthSessions, userPreferences,
-  conversations, queryTemplates, favoriteQueries,
+  conversations, queryTemplates, favoriteQueries, roles, permissions, userRoles, rolePermissions, auditLog,
   type User, type InsertUser, type InsertOAuthUser, type ErpConnection, type InsertErpConnection,
   type KpiConfiguration, type InsertKpiConfiguration, type KpiData, type InsertKpiData,
   type EmailConfiguration, type InsertEmailConfiguration, type ChatHistory, type InsertChatHistory,
   type OAuthSession, type InsertOAuthSession, type UserPreferences, type InsertUserPreferences, type UpdateUserPreferences,
   type Conversation, type InsertConversation, type QueryTemplate, type InsertQueryTemplate,
-  type FavoriteQuery, type InsertFavoriteQuery
+  type FavoriteQuery, type InsertFavoriteQuery,
+  type Role, type InsertRole, type UpdateRole, type Permission, type InsertPermission,
+  type UserRole, type InsertUserRole, type UpdateUserRole, type RolePermission, type InsertRolePermission,
+  type AuditLog, type InsertAuditLog, type UserWithRoles, type RoleWithPermissions
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -81,6 +84,40 @@ export interface IStorage {
   createUserPreferences(preferences: InsertUserPreferences): Promise<UserPreferences>;
   updateUserPreferences(userId: string, updates: UpdateUserPreferences): Promise<UserPreferences | undefined>;
   resetUserPreferences(userId: string): Promise<UserPreferences | undefined>;
+
+  // RBAC operations
+  // Role operations
+  getRoles(): Promise<Role[]>;
+  getRole(id: string): Promise<Role | undefined>;
+  getRoleByName(name: string): Promise<Role | undefined>;
+  createRole(role: InsertRole): Promise<Role>;
+  createRoleIfNotExists(role: InsertRole): Promise<Role>;
+  updateRole(id: string, updates: UpdateRole): Promise<Role | undefined>;
+  deleteRole(id: string): Promise<boolean>;
+
+  // Permission operations  
+  getPermissions(): Promise<Permission[]>;
+  getPermission(id: string): Promise<Permission | undefined>;
+  getPermissionByName(name: string): Promise<Permission | undefined>;
+  createPermission(permission: InsertPermission): Promise<Permission>;
+  createPermissionIfNotExists(permission: InsertPermission): Promise<Permission>;
+  deletePermission(id: string): Promise<boolean>;
+
+  // User Role operations
+  getUserRoles(userId: string): Promise<(UserRole & { role: Role })[]>;
+  assignRoleToUser(userId: string, roleId: string, assignedBy?: string): Promise<UserRole>;
+  revokeRoleFromUser(userId: string, roleId: string): Promise<boolean>;
+  getUserPermissions(userId: string): Promise<Permission[]>;
+
+  // Role Permission operations
+  getRolePermissions(roleId: string): Promise<Permission[]>;
+  assignPermissionToRole(roleId: string, permissionId: string): Promise<RolePermission>;
+  assignPermissionsToRole(roleName: string, permissionNames: string[]): Promise<void>;
+  revokePermissionFromRole(roleId: string, permissionId: string): Promise<boolean>;
+
+  // Audit Log operations
+  createAuditLog(auditData: InsertAuditLog): Promise<AuditLog>;
+  getAuditLogs(userId?: string, limit?: number): Promise<AuditLog[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -381,6 +418,270 @@ export class DatabaseStorage implements IStorage {
     await db.update(favoriteQueries)
       .set({ usageCount: sql`${favoriteQueries.usageCount} + 1` })
       .where(eq(favoriteQueries.id, id));
+  }
+
+  // User Preferences operations
+  async getUserPreferences(userId: string): Promise<UserPreferences | undefined> {
+    const [preferences] = await db.select().from(userPreferences)
+      .where(eq(userPreferences.userId, userId));
+    return preferences || undefined;
+  }
+
+  async createUserPreferences(preferences: InsertUserPreferences): Promise<UserPreferences> {
+    const [newPreferences] = await db.insert(userPreferences).values(preferences).returning();
+    return newPreferences;
+  }
+
+  async updateUserPreferences(userId: string, updates: UpdateUserPreferences): Promise<UserPreferences | undefined> {
+    const [updatedPreferences] = await db.update(userPreferences)
+      .set(updates)
+      .where(eq(userPreferences.userId, userId))
+      .returning();
+    return updatedPreferences || undefined;
+  }
+
+  async resetUserPreferences(userId: string): Promise<UserPreferences | undefined> {
+    const [resetPreferences] = await db.update(userPreferences)
+      .set({
+        theme: "light",
+        sidebarCollapsed: false,
+        language: "en",
+        timezone: "UTC",
+        dateFormat: "MM/dd/yyyy",
+        timeFormat: "12h",
+        currency: "USD",
+        emailNotifications: true,
+        pushNotifications: true,
+        weeklyReports: true,
+        systemAlerts: true,
+        defaultDashboard: "overview",
+        refreshInterval: 30,
+        showTutorials: true,
+        sessionTimeout: 30,
+        twoFactorEnabled: false,
+        dataRetention: 365,
+        exportFormat: "csv",
+      })
+      .where(eq(userPreferences.userId, userId))
+      .returning();
+    return resetPreferences || undefined;
+  }
+
+  // RBAC operations
+  // Role operations
+  async getRoles(): Promise<Role[]> {
+    return await db.select().from(roles)
+      .where(eq(roles.isActive, true))
+      .orderBy(roles.displayName);
+  }
+
+  async getRole(id: string): Promise<Role | undefined> {
+    const [role] = await db.select().from(roles).where(eq(roles.id, id));
+    return role || undefined;
+  }
+
+  async getRoleByName(name: string): Promise<Role | undefined> {
+    const [role] = await db.select().from(roles).where(eq(roles.name, name));
+    return role || undefined;
+  }
+
+  async createRole(role: InsertRole): Promise<Role> {
+    const [newRole] = await db.insert(roles).values(role).returning();
+    return newRole;
+  }
+
+  async createRoleIfNotExists(role: InsertRole): Promise<Role> {
+    const existingRole = await this.getRoleByName(role.name);
+    if (existingRole) {
+      return existingRole;
+    }
+    return await this.createRole(role);
+  }
+
+  async updateRole(id: string, updates: UpdateRole): Promise<Role | undefined> {
+    const [updatedRole] = await db.update(roles)
+      .set(updates)
+      .where(eq(roles.id, id))
+      .returning();
+    return updatedRole || undefined;
+  }
+
+  async deleteRole(id: string): Promise<boolean> {
+    const result = await db.delete(roles).where(eq(roles.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  // Permission operations
+  async getPermissions(): Promise<Permission[]> {
+    return await db.select().from(permissions)
+      .orderBy(permissions.category, permissions.displayName);
+  }
+
+  async getPermission(id: string): Promise<Permission | undefined> {
+    const [permission] = await db.select().from(permissions).where(eq(permissions.id, id));
+    return permission || undefined;
+  }
+
+  async getPermissionByName(name: string): Promise<Permission | undefined> {
+    const [permission] = await db.select().from(permissions).where(eq(permissions.name, name));
+    return permission || undefined;
+  }
+
+  async createPermission(permission: InsertPermission): Promise<Permission> {
+    const [newPermission] = await db.insert(permissions).values(permission).returning();
+    return newPermission;
+  }
+
+  async createPermissionIfNotExists(permission: InsertPermission): Promise<Permission> {
+    const existingPermission = await this.getPermissionByName(permission.name);
+    if (existingPermission) {
+      return existingPermission;
+    }
+    return await this.createPermission(permission);
+  }
+
+  async deletePermission(id: string): Promise<boolean> {
+    const result = await db.delete(permissions).where(eq(permissions.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  // User Role operations
+  async getUserRoles(userId: string): Promise<(UserRole & { role: Role })[]> {
+    return await db.select({
+      id: userRoles.id,
+      userId: userRoles.userId,
+      roleId: userRoles.roleId,
+      assignedBy: userRoles.assignedBy,
+      assignedAt: userRoles.assignedAt,
+      expiresAt: userRoles.expiresAt,
+      isActive: userRoles.isActive,
+      role: roles,
+    })
+    .from(userRoles)
+    .innerJoin(roles, eq(userRoles.roleId, roles.id))
+    .where(and(
+      eq(userRoles.userId, userId),
+      eq(userRoles.isActive, true)
+    ));
+  }
+
+  async assignRoleToUser(userId: string, roleId: string, assignedBy?: string): Promise<UserRole> {
+    const [newUserRole] = await db.insert(userRoles).values({
+      userId,
+      roleId,
+      assignedBy,
+      isActive: true,
+    }).returning();
+    return newUserRole;
+  }
+
+  async revokeRoleFromUser(userId: string, roleId: string): Promise<boolean> {
+    const result = await db.update(userRoles)
+      .set({ isActive: false })
+      .where(and(
+        eq(userRoles.userId, userId),
+        eq(userRoles.roleId, roleId)
+      ));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async getUserPermissions(userId: string): Promise<Permission[]> {
+    return await db.select({
+      id: permissions.id,
+      name: permissions.name,
+      displayName: permissions.displayName,
+      description: permissions.description,
+      category: permissions.category,
+      resource: permissions.resource,
+      action: permissions.action,
+      isSystem: permissions.isSystem,
+      createdAt: permissions.createdAt,
+    })
+    .from(permissions)
+    .innerJoin(rolePermissions, eq(permissions.id, rolePermissions.permissionId))
+    .innerJoin(userRoles, eq(rolePermissions.roleId, userRoles.roleId))
+    .where(and(
+      eq(userRoles.userId, userId),
+      eq(userRoles.isActive, true)
+    ));
+  }
+
+  // Role Permission operations
+  async getRolePermissions(roleId: string): Promise<Permission[]> {
+    return await db.select({
+      id: permissions.id,
+      name: permissions.name,
+      displayName: permissions.displayName,
+      description: permissions.description,
+      category: permissions.category,
+      resource: permissions.resource,
+      action: permissions.action,
+      isSystem: permissions.isSystem,
+      createdAt: permissions.createdAt,
+    })
+    .from(permissions)
+    .innerJoin(rolePermissions, eq(permissions.id, rolePermissions.permissionId))
+    .where(eq(rolePermissions.roleId, roleId));
+  }
+
+  async assignPermissionToRole(roleId: string, permissionId: string): Promise<RolePermission> {
+    const [newRolePermission] = await db.insert(rolePermissions).values({
+      roleId,
+      permissionId,
+    }).returning();
+    return newRolePermission;
+  }
+
+  async assignPermissionsToRole(roleName: string, permissionNames: string[]): Promise<void> {
+    const role = await this.getRoleByName(roleName);
+    if (!role) {
+      throw new Error(`Role ${roleName} not found`);
+    }
+
+    for (const permissionName of permissionNames) {
+      const permission = await this.getPermissionByName(permissionName);
+      if (permission) {
+        // Check if the role-permission relationship already exists
+        const existingRolePermissions = await db.select()
+          .from(rolePermissions)
+          .where(and(
+            eq(rolePermissions.roleId, role.id),
+            eq(rolePermissions.permissionId, permission.id)
+          ));
+
+        if (existingRolePermissions.length === 0) {
+          await this.assignPermissionToRole(role.id, permission.id);
+        }
+      }
+    }
+  }
+
+  async revokePermissionFromRole(roleId: string, permissionId: string): Promise<boolean> {
+    const result = await db.delete(rolePermissions)
+      .where(and(
+        eq(rolePermissions.roleId, roleId),
+        eq(rolePermissions.permissionId, permissionId)
+      ));
+    return (result.rowCount || 0) > 0;
+  }
+
+  // Audit Log operations
+  async createAuditLog(auditData: InsertAuditLog): Promise<AuditLog> {
+    const [newAuditLog] = await db.insert(auditLog).values(auditData).returning();
+    return newAuditLog;
+  }
+
+  async getAuditLogs(userId?: string, limit: number = 100): Promise<AuditLog[]> {
+    if (userId) {
+      return await db.select().from(auditLog)
+        .where(eq(auditLog.userId, userId))
+        .orderBy(desc(auditLog.timestamp))
+        .limit(limit);
+    }
+    
+    return await db.select().from(auditLog)
+      .orderBy(desc(auditLog.timestamp))
+      .limit(limit);
   }
 }
 

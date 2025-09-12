@@ -159,6 +159,61 @@ export const userPreferences = pgTable("user_preferences", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// RBAC Tables for Role-Based Access Control
+export const roles = pgTable("roles", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(), // admin, ops_manager, finance, cfo, project_manager, cost_manager, sales, marketing
+  displayName: text("display_name").notNull(), // Human-readable name
+  description: text("description"), // Role description
+  color: text("color").default("#6366f1").notNull(), // UI color for role badges
+  isSystem: boolean("is_system").default(true).notNull(), // System roles vs custom roles
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const permissions = pgTable("permissions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(), // e.g., user.create, financial.view, erp.manage
+  displayName: text("display_name").notNull(),
+  description: text("description"),
+  category: text("category").notNull(), // user_management, financial_data, erp_access, ai_assistant, dashboard, settings
+  resource: text("resource").notNull(), // users, kpis, erp_connections, email_configs, etc.
+  action: text("action").notNull(), // create, read, update, delete, manage
+  isSystem: boolean("is_system").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const userRoles = pgTable("user_roles", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  roleId: uuid("role_id").references(() => roles.id).notNull(),
+  assignedBy: uuid("assigned_by").references(() => users.id), // Who assigned this role
+  assignedAt: timestamp("assigned_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at"), // Optional role expiration
+  isActive: boolean("is_active").default(true).notNull(),
+});
+
+export const rolePermissions = pgTable("role_permissions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  roleId: uuid("role_id").references(() => roles.id).notNull(),
+  permissionId: uuid("permission_id").references(() => permissions.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const auditLog = pgTable("audit_log", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id),
+  action: text("action").notNull(), // role.assigned, role.revoked, permission.granted, etc.
+  resource: text("resource").notNull(), // Table or entity affected
+  resourceId: text("resource_id"), // ID of the affected resource
+  oldValue: jsonb("old_value"), // Previous state
+  newValue: jsonb("new_value"), // New state
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
 // Relations
 export const userRelations = relations(users, ({ many, one }) => ({
   erpConnections: many(erpConnections),
@@ -169,6 +224,10 @@ export const userRelations = relations(users, ({ many, one }) => ({
   queryTemplates: many(queryTemplates),
   favoriteQueries: many(favoriteQueries),
   preferences: one(userPreferences),
+  // RBAC relations
+  userRoles: many(userRoles),
+  assignedRoles: many(userRoles, { relationName: "assigned_roles" }),
+  auditLogs: many(auditLog),
 }));
 
 export const conversationRelations = relations(conversations, ({ one, many }) => ({
@@ -236,6 +295,50 @@ export const chatHistoryRelations = relations(chatHistory, ({ one }) => ({
 export const userPreferencesRelations = relations(userPreferences, ({ one }) => ({
   user: one(users, {
     fields: [userPreferences.userId],
+    references: [users.id],
+  }),
+}));
+
+// RBAC Relations
+export const roleRelations = relations(roles, ({ many }) => ({
+  userRoles: many(userRoles),
+  rolePermissions: many(rolePermissions),
+}));
+
+export const permissionRelations = relations(permissions, ({ many }) => ({
+  rolePermissions: many(rolePermissions),
+}));
+
+export const userRoleRelations = relations(userRoles, ({ one }) => ({
+  user: one(users, {
+    fields: [userRoles.userId],
+    references: [users.id],
+  }),
+  role: one(roles, {
+    fields: [userRoles.roleId],
+    references: [roles.id],
+  }),
+  assignedByUser: one(users, {
+    fields: [userRoles.assignedBy],
+    references: [users.id],
+    relationName: "assigned_roles",
+  }),
+}));
+
+export const rolePermissionRelations = relations(rolePermissions, ({ one }) => ({
+  role: one(roles, {
+    fields: [rolePermissions.roleId],
+    references: [roles.id],
+  }),
+  permission: one(permissions, {
+    fields: [rolePermissions.permissionId],
+    references: [permissions.id],
+  }),
+}));
+
+export const auditLogRelations = relations(auditLog, ({ one }) => ({
+  user: one(users, {
+    fields: [auditLog.userId],
     references: [users.id],
   }),
 }));
@@ -316,6 +419,43 @@ export const updateUserPreferencesSchema = insertUserPreferencesSchema.omit({
   userId: true,
 }).partial();
 
+// RBAC Insert Schemas
+export const insertRoleSchema = createInsertSchema(roles).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPermissionSchema = createInsertSchema(permissions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertUserRoleSchema = createInsertSchema(userRoles).omit({
+  id: true,
+  assignedAt: true,
+});
+
+export const insertRolePermissionSchema = createInsertSchema(rolePermissions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertAuditLogSchema = createInsertSchema(auditLog).omit({
+  id: true,
+  timestamp: true,
+});
+
+// Update schemas for RBAC
+export const updateRoleSchema = insertRoleSchema.omit({
+  name: true,
+}).partial();
+
+export const updateUserRoleSchema = insertUserRoleSchema.omit({
+  userId: true,
+  roleId: true,
+}).partial();
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertOAuthUser = z.infer<typeof insertOAuthUserSchema>;
@@ -341,6 +481,51 @@ export type FavoriteQuery = typeof favoriteQueries.$inferSelect;
 export type InsertUserPreferences = z.infer<typeof insertUserPreferencesSchema>;
 export type UpdateUserPreferences = z.infer<typeof updateUserPreferencesSchema>;
 export type UserPreferences = typeof userPreferences.$inferSelect;
+
+// RBAC Types
+export type InsertRole = z.infer<typeof insertRoleSchema>;
+export type UpdateRole = z.infer<typeof updateRoleSchema>;
+export type Role = typeof roles.$inferSelect;
+export type InsertPermission = z.infer<typeof insertPermissionSchema>;
+export type Permission = typeof permissions.$inferSelect;
+export type InsertUserRole = z.infer<typeof insertUserRoleSchema>;
+export type UpdateUserRole = z.infer<typeof updateUserRoleSchema>;
+export type UserRole = typeof userRoles.$inferSelect;
+export type InsertRolePermission = z.infer<typeof insertRolePermissionSchema>;
+export type RolePermission = typeof rolePermissions.$inferSelect;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type AuditLog = typeof auditLog.$inferSelect;
+
+// Extended User Type with Roles and Permissions
+export interface UserWithRoles extends User {
+  userRoles: (UserRole & { role: Role })[];
+  permissions: Permission[];
+}
+
+export interface RoleWithPermissions extends Role {
+  permissions: Permission[];
+}
+
+// Permission validation schemas
+export const roleAssignmentSchema = z.object({
+  userId: z.string().uuid(),
+  roleId: z.string().uuid(),
+  expiresAt: z.date().optional(),
+});
+
+export const roleRevocationSchema = z.object({
+  userId: z.string().uuid(),
+  roleId: z.string().uuid(),
+});
+
+export const permissionCheckSchema = z.object({
+  resource: z.string(),
+  action: z.string(),
+});
+
+export type RoleAssignment = z.infer<typeof roleAssignmentSchema>;
+export type RoleRevocation = z.infer<typeof roleRevocationSchema>;
+export type PermissionCheck = z.infer<typeof permissionCheckSchema>;
 
 // Email API Response Types
 export interface EmailProviderStatus {
