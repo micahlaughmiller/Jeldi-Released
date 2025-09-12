@@ -12,6 +12,7 @@ import { useRealtimeData } from "@/hooks/use-realtime-data";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { performLogout } from "@/lib/logout";
 
 interface User {
   id: string;
@@ -111,10 +112,8 @@ export default function Dashboard() {
     }
   }, [toast, refetchSystems]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    setLocation("/login");
+  const handleLogout = async () => {
+    await performLogout(setLocation, { showToast: true });
   };
 
   if (!user) {

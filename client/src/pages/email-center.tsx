@@ -10,6 +10,7 @@ import Sidebar from "@/components/layout/sidebar";
 import Header from "@/components/layout/header";
 import type { User, EmailStatusResponse, EmailConnectResponse } from "@shared/schema";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { performLogout } from "@/lib/logout";
 
 export default function EmailCenter() {
   const [, setLocation] = useLocation();
@@ -42,10 +43,8 @@ export default function EmailCenter() {
     }
   }, [setLocation]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    setLocation("/login");
+  const handleLogout = async () => {
+    await performLogout(setLocation, { showToast: true });
   };
 
   const connectProviderMutation = useMutation<EmailConnectResponse, Error, 'gmail' | 'outlook'>({

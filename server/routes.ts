@@ -147,6 +147,26 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
+  app.post("/api/auth/logout", authenticateToken, async (req: any, res) => {
+    try {
+      // In a more advanced implementation, you could maintain a blacklist
+      // of revoked tokens or use a token store like Redis
+      // For now, we'll just confirm the logout was successful
+      // The client-side cleanup is the primary security measure
+      
+      res.json({ 
+        message: "Logout successful", 
+        timestamp: new Date().toISOString() 
+      });
+    } catch (error) {
+      console.error("Logout error:", error);
+      res.status(500).json({ 
+        message: "Logout failed", 
+        error: (error as Error).message 
+      });
+    }
+  });
+
   // OAuth routes
   app.get("/api/oauth/providers", async (req, res) => {
     try {
