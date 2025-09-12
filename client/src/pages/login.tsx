@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { getApiUrl } from "@/lib/api-config";
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -35,7 +36,7 @@ export default function Login() {
           setIsLoading(true);
           
           // Securely retrieve OAuth result from server using session ID
-          const response = await fetch(`/api/auth/oauth-result/${oauthSession}`);
+          const response = await fetch(getApiUrl(`/api/auth/oauth-result/${oauthSession}`));
           
           if (!response.ok) {
             throw new Error('Failed to retrieve OAuth result');
@@ -75,7 +76,7 @@ export default function Login() {
   useEffect(() => {
     const fetchProviders = async () => {
       try {
-        const response = await fetch("/api/oauth/providers");
+        const response = await fetch(getApiUrl("/api/oauth/providers"));
         if (response.ok) {
           const providers = await response.json();
           setOauthProviders(providers);
@@ -156,7 +157,7 @@ export default function Login() {
 
   const handleOAuthLogin = (provider: string) => {
     // Redirect to OAuth provider
-    window.location.href = `/api/auth/${provider}`;
+    window.location.href = getApiUrl(`/api/auth/${provider}`);
   };
 
   const getOAuthIcon = (provider: string) => {
