@@ -1,9 +1,11 @@
 import OpenAI from "openai";
 
 // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR || "default_key"
-});
+function getOpenAIClient() {
+  return new OpenAI({ 
+    apiKey: process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_ENV_VAR || "default_key"
+  });
+}
 
 export interface ERPQueryRequest {
   query: string;
@@ -49,6 +51,7 @@ Please analyze this data and provide:
 
 Respond in JSON format with the structure: { "response": "string", "insights": ["string"], "recommendations": ["string"], "dataUsed": ["string"] }`;
 
+    const openai = getOpenAIClient();
     const response = await openai.chat.completions.create({
       model: "gpt-5",
       messages: [
@@ -79,6 +82,7 @@ export async function generateKPIInsights(kpiData: Record<string, any>): Promise
   trends: string[];
 }> {
   try {
+    const openai = getOpenAIClient();
     const response = await openai.chat.completions.create({
       model: "gpt-5",
       messages: [
