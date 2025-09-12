@@ -1,9 +1,9 @@
 import { 
-  users, erpConnections, kpiConfigurations, kpiData, emailConfigurations, chatHistory, oauthSessions,
+  users, erpConnections, kpiConfigurations, kpiData, emailConfigurations, chatHistory, oauthSessions, userPreferences,
   type User, type InsertUser, type InsertOAuthUser, type ErpConnection, type InsertErpConnection,
   type KpiConfiguration, type InsertKpiConfiguration, type KpiData, type InsertKpiData,
   type EmailConfiguration, type InsertEmailConfiguration, type ChatHistory, type InsertChatHistory,
-  type OAuthSession, type InsertOAuthSession
+  type OAuthSession, type InsertOAuthSession, type UserPreferences, type InsertUserPreferences, type UpdateUserPreferences
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -51,6 +51,12 @@ export interface IStorage {
   // Chat History operations
   getChatHistory(userId: string, limit?: number): Promise<ChatHistory[]>;
   createChatHistory(chat: InsertChatHistory): Promise<ChatHistory>;
+
+  // User Preferences operations
+  getUserPreferences(userId: string): Promise<UserPreferences | undefined>;
+  createUserPreferences(preferences: InsertUserPreferences): Promise<UserPreferences>;
+  updateUserPreferences(userId: string, updates: UpdateUserPreferences): Promise<UserPreferences | undefined>;
+  resetUserPreferences(userId: string): Promise<UserPreferences | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -220,6 +226,31 @@ export class DatabaseStorage implements IStorage {
 
   async cleanupExpiredOAuthSessions(): Promise<void> {
     await db.delete(oauthSessions).where(sql`${oauthSessions.expiresAt} < NOW()`);
+  }
+
+  async getUserPreferences(userId: string): Promise<UserPreferences | undefined> {
+    const [preferences] = await db.select().from(userPreferences)
+      .where(eq(userPreferences.userId, userId));
+    return preferences || undefined;
+  }
+
+  async createUserPreferences(preferences: InsertUserPreferences): Promise<UserPreferences> {
+    const [newPreferences] = await db.insert(userPreferences).values(preferences).returning();
+    return newPreferences;
+  }
+
+  async updateUserPreferences(userId: string, updates: UpdateUserPreferences): Promise<UserPreferences | undefined> {
+    const [updated] = await db.update(userPreferences)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(userPreferences.userId, userId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async resetUserPreferences(userId: string): Promise<UserPreferences | undefined> {
+    // Delete existing preferences and create default ones
+    await db.delete(userPreferences).where(eq(userPreferences.userId, userId));
+    return await this.createUserPreferences({ userId });
   }
 }
 

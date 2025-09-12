@@ -91,7 +91,14 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
         </Link>
         
         <Link href="/settings">
-          <a className="flex items-center space-x-3 px-3 py-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+          <a 
+            className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+              location === "/settings" 
+                ? "bg-primary text-primary-foreground" 
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            }`}
+            data-testid="nav-settings"
+          >
             <i className="fas fa-cog w-4"></i>
             <span>Settings</span>
           </a>

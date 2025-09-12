@@ -5,7 +5,7 @@ import { storage } from "./storage";
 import { erpService } from "./services/erpService";
 import { emailService } from "./services/emailService";
 import { analyzeERPData, generateKPIInsights } from "./services/openai";
-import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema } from "@shared/schema";
+import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema, updateUserPreferencesSchema, insertUserPreferencesSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import passport from "passport";
@@ -240,6 +240,143 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
     }
   );
+
+  // User Settings routes
+  app.get("/api/user/preferences", authenticateToken, async (req: any, res) => {
+    try {
+      let preferences = await storage.getUserPreferences(req.user.id);
+      
+      // If user has no preferences, create default ones
+      if (!preferences) {
+        preferences = await storage.createUserPreferences({ userId: req.user.id });
+      }
+      
+      res.json(preferences);
+    } catch (error) {
+      console.error("Get user preferences error:", error);
+      res.status(500).json({ message: "Failed to get user preferences", error: (error as Error).message });
+    }
+  });
+
+  app.put("/api/user/preferences", authenticateToken, async (req: any, res) => {
+    try {
+      const updates = updateUserPreferencesSchema.parse(req.body);
+      
+      // Check if user has preferences, create if not exists
+      let preferences = await storage.getUserPreferences(req.user.id);
+      if (!preferences) {
+        preferences = await storage.createUserPreferences({ userId: req.user.id });
+      }
+      
+      const updatedPreferences = await storage.updateUserPreferences(req.user.id, updates);
+      
+      if (!updatedPreferences) {
+        return res.status(404).json({ message: "User preferences not found" });
+      }
+      
+      res.json(updatedPreferences);
+    } catch (error) {
+      console.error("Update user preferences error:", error);
+      res.status(400).json({ message: "Failed to update user preferences", error: (error as Error).message });
+    }
+  });
+
+  app.put("/api/user/profile", authenticateToken, async (req: any, res) => {
+    try {
+      const { username, email, firstName, lastName, profileImage } = req.body;
+      
+      // Validate input
+      if (!username && !email && !firstName && !lastName && !profileImage) {
+        return res.status(400).json({ message: "At least one field must be provided for update" });
+      }
+      
+      // If email is being updated, check it's not already in use
+      if (email && email !== req.user.email) {
+        const existingUser = await storage.getUserByEmail(email);
+        if (existingUser && existingUser.id !== req.user.id) {
+          return res.status(400).json({ message: "Email already in use" });
+        }
+      }
+      
+      // If username is being updated, check it's not already in use
+      if (username && username !== req.user.username) {
+        const existingUser = await storage.getUserByUsername(username);
+        if (existingUser && existingUser.id !== req.user.id) {
+          return res.status(400).json({ message: "Username already in use" });
+        }
+      }
+      
+      const updates: any = {};
+      if (username) updates.username = username;
+      if (email) updates.email = email;
+      if (firstName) updates.firstName = firstName;
+      if (lastName) updates.lastName = lastName;
+      if (profileImage) updates.profileImage = profileImage;
+      
+      const updatedUser = await storage.updateUser(req.user.id, updates);
+      
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Return user without password
+      const { password, ...userWithoutPassword } = updatedUser;
+      res.json(userWithoutPassword);
+    } catch (error) {
+      console.error("Update user profile error:", error);
+      res.status(400).json({ message: "Failed to update user profile", error: (error as Error).message });
+    }
+  });
+
+  app.put("/api/user/password", authenticateToken, async (req: any, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Both current and new password are required" });
+      }
+      
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: "New password must be at least 8 characters long" });
+      }
+      
+      // For OAuth users, password change is not allowed
+      if (req.user.authProvider !== "local" || !req.user.password) {
+        return res.status(400).json({ message: "Password change not available for OAuth accounts" });
+      }
+      
+      // Verify current password
+      const isValidCurrentPassword = await bcrypt.compare(currentPassword, req.user.password);
+      if (!isValidCurrentPassword) {
+        return res.status(400).json({ message: "Current password is incorrect" });
+      }
+      
+      // Hash new password
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+      
+      // Update password
+      const updatedUser = await storage.updateUser(req.user.id, { password: hashedNewPassword });
+      
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      res.json({ message: "Password updated successfully" });
+    } catch (error) {
+      console.error("Change password error:", error);
+      res.status(400).json({ message: "Failed to change password", error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/user/preferences/reset", authenticateToken, async (req: any, res) => {
+    try {
+      const preferences = await storage.resetUserPreferences(req.user.id);
+      res.json(preferences);
+    } catch (error) {
+      console.error("Reset user preferences error:", error);
+      res.status(500).json({ message: "Failed to reset user preferences", error: (error as Error).message });
+    }
+  });
 
   // Microsoft OAuth routes
   app.get("/api/auth/microsoft", async (req, res, next) => {

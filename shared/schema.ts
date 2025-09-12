@@ -87,12 +87,44 @@ export const chatHistory = pgTable("chat_history", {
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
+export const userPreferences = pgTable("user_preferences", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id).notNull().unique(),
+  // Theme & Appearance
+  theme: text("theme").default("light").notNull(), // light, dark, system
+  sidebarCollapsed: boolean("sidebar_collapsed").default(false).notNull(),
+  // Localization
+  language: text("language").default("en").notNull(), // en, es, fr, de, etc.
+  timezone: text("timezone").default("UTC").notNull(),
+  dateFormat: text("date_format").default("MM/dd/yyyy").notNull(), // MM/dd/yyyy, dd/MM/yyyy, yyyy-MM-dd
+  timeFormat: text("time_format").default("12h").notNull(), // 12h, 24h  
+  currency: text("currency").default("USD").notNull(), // USD, EUR, GBP, etc.
+  // Notifications
+  emailNotifications: boolean("email_notifications").default(true).notNull(),
+  pushNotifications: boolean("push_notifications").default(true).notNull(),
+  weeklyReports: boolean("weekly_reports").default(true).notNull(),
+  systemAlerts: boolean("system_alerts").default(true).notNull(),
+  // Dashboard Preferences
+  defaultDashboard: text("default_dashboard").default("overview").notNull(), // overview, analytics, custom
+  refreshInterval: integer("refresh_interval").default(30).notNull(), // seconds
+  showTutorials: boolean("show_tutorials").default(true).notNull(),
+  // Privacy & Security
+  sessionTimeout: integer("session_timeout").default(30).notNull(), // minutes
+  twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
+  // Data & Export
+  dataRetention: integer("data_retention").default(365).notNull(), // days
+  exportFormat: text("export_format").default("csv").notNull(), // csv, json, xlsx
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // Relations
-export const userRelations = relations(users, ({ many }) => ({
+export const userRelations = relations(users, ({ many, one }) => ({
   erpConnections: many(erpConnections),
   kpiConfigurations: many(kpiConfigurations),
   emailConfigurations: many(emailConfigurations),
   chatHistory: many(chatHistory),
+  preferences: one(userPreferences),
 }));
 
 export const erpConnectionRelations = relations(erpConnections, ({ one }) => ({
@@ -127,6 +159,13 @@ export const emailConfigurationRelations = relations(emailConfigurations, ({ one
 export const chatHistoryRelations = relations(chatHistory, ({ one }) => ({
   user: one(users, {
     fields: [chatHistory.userId],
+    references: [users.id],
+  }),
+}));
+
+export const userPreferencesRelations = relations(userPreferences, ({ one }) => ({
+  user: one(users, {
+    fields: [userPreferences.userId],
     references: [users.id],
   }),
 }));
@@ -177,6 +216,16 @@ export const insertChatHistorySchema = createInsertSchema(chatHistory).omit({
   timestamp: true,
 });
 
+export const insertUserPreferencesSchema = createInsertSchema(userPreferences).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateUserPreferencesSchema = insertUserPreferencesSchema.omit({
+  userId: true,
+}).partial();
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertOAuthUser = z.infer<typeof insertOAuthUserSchema>;
@@ -193,6 +242,9 @@ export type InsertOAuthSession = z.infer<typeof insertOAuthSessionSchema>;
 export type OAuthSession = typeof oauthSessions.$inferSelect;
 export type InsertChatHistory = z.infer<typeof insertChatHistorySchema>;
 export type ChatHistory = typeof chatHistory.$inferSelect;
+export type InsertUserPreferences = z.infer<typeof insertUserPreferencesSchema>;
+export type UpdateUserPreferences = z.infer<typeof updateUserPreferencesSchema>;
+export type UserPreferences = typeof userPreferences.$inferSelect;
 
 // Email API Response Types
 export interface EmailProviderStatus {
