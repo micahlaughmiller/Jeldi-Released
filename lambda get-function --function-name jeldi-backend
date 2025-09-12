@@ -1,0 +1,47 @@
+{
+    "FunctionName": "jeldi-backend",
+    "FunctionArn": "arn:aws:lambda:us-east-2:537692431436:function:jeldi-backend",
+    "Runtime": "nodejs20.x",
+    "Role": "arn:aws:iam::537692431436:role/jeldi-lambda-role",
+    "Handler": "lambda-bundled.handler",
+    "CodeSize": 1791459,
+    "Description": "",
+    "Timeout": 25,
+    "MemorySize": 512,
+    "LastModified": "2025-09-12T11:42:41.000+0000",
+    "CodeSha256": "D/swMrkFluHWI7zPPZ68MDBIPZ9oj7Dw0ZUkdkcTWXw=",
+    "Version": "$LATEST",
+    "Environment": {
+        "Variables": {
+            "DATABASE_URL": "postgresql://neondb_owner:npg_wOtg9fQH8PDW@ep-empty-math-a5aix2on.us-east-2.aws.neon.tech/neondb?sslmode=require",
+            "JWT_SECRET": "JdhOOQZdvOYIPpOOVTEzuXIFWvTfA+tVgwteCl69GpWwkzuHp2FxQHHtUnlsUoCQOxfXFKWuh2GhCs7JkbYLtg==",
+            "OPENAI_API_KEY": "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"
+        }
+    },
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "6829ac61-1a14-4237-b1b0-582202226d3e",
+    "State": "Active",
+    "LastUpdateStatus": "InProgress",
+    "LastUpdateStatusReason": "The function is being created.",
+    "LastUpdateStatusReasonCode": "Creating",
+    "PackageType": "Zip",
+    "Architectures": [
+        "x86_64"
+    ],
+    "EphemeralStorage": {
+        "Size": 512
+    },
+    "SnapStart": {
+        "ApplyOn": "None",
+        "OptimizationStatus": "Off"
+    },
+    "RuntimeVersionConfig": {
+        "RuntimeVersionArn": "arn:aws:lambda:us-east-2::runtime:1ffa4c233e75382c8a39aa96770f3b81af75cba9794a5c2a1750c1ee63cdfe10"
+    },
+    "LoggingConfig": {
+        "LogFormat": "Text",
+        "LogGroup": "/aws/lambda/jeldi-backend"
+    }
+}

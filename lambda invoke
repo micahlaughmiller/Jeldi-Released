@@ -1,0 +1,51 @@
+{
+    "Configuration": {
+        "FunctionName": "jeldi-backend",
+        "FunctionArn": "arn:aws:lambda:us-east-2:537692431436:function:jeldi-backend",
+        "Runtime": "nodejs20.x",
+        "Role": "arn:aws:iam::537692431436:role/jeldi-lambda-role",
+        "Handler": "lambda-bundled.handler",
+        "CodeSize": 1791459,
+        "Description": "",
+        "Timeout": 25,
+        "MemorySize": 512,
+        "LastModified": "2025-09-12T11:42:41.000+0000",
+        "CodeSha256": "D/swMrkFluHWI7zPPZ68MDBIPZ9oj7Dw0ZUkdkcTWXw=",
+        "Version": "$LATEST",
+        "Environment": {
+            "Variables": {
+                "DATABASE_URL": "postgresql://neondb_owner:npg_wOtg9fQH8PDW@ep-empty-math-a5aix2on.us-east-2.aws.neon.tech/neondb?sslmode=require",
+                "JWT_SECRET": "JdhOOQZdvOYIPpOOVTEzuXIFWvTfA+tVgwteCl69GpWwkzuHp2FxQHHtUnlsUoCQOxfXFKWuh2GhCs7JkbYLtg==",
+                "OPENAI_API_KEY": "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"
+            }
+        },
+        "TracingConfig": {
+            "Mode": "PassThrough"
+        },
+        "RevisionId": "1f269f8d-d765-4d4e-bb35-ca8b87056771",
+        "State": "Active",
+        "LastUpdateStatus": "Successful",
+        "PackageType": "Zip",
+        "Architectures": [
+            "x86_64"
+        ],
+        "EphemeralStorage": {
+            "Size": 512
+        },
+        "SnapStart": {
+            "ApplyOn": "None",
+            "OptimizationStatus": "Off"
+        },
+        "RuntimeVersionConfig": {
+            "RuntimeVersionArn": "arn:aws:lambda:us-east-2::runtime:1ffa4c233e75382c8a39aa96770f3b81af75cba9794a5c2a1750c1ee63cdfe10"
+        },
+        "LoggingConfig": {
+            "LogFormat": "Text",
+            "LogGroup": "/aws/lambda/jeldi-backend"
+        }
+    },
+    "Code": {
+        "RepositoryType": "S3",
+        "Location": "https://awslambda-us-east-2-tasks.s3.us-east-2.amazonaws.com/snapshots/537692431436/jeldi-backend-064971a9-0aec-401e-82ea-69980520b9b6?versionId=hBPZ95hJRrbpktxiyvNy9NxcktutcY.V&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEKr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQC7q77gL64B5Iao3vogDgOqUZ7p8%2BoL%2BhrPGRiqpRDGwgIgN3JrqOjVA7oKC1o437CrzDjUgOSJ6fVyy2MqWJ1rZJAqiQIIIxAFGgwxMDQyNDYwMTc4NjUiDF8RHK94oSw06bGkOirmAYmzyEA7Wc3BVVP6PNiGHI7JpN%2F0LGvTHE2PFSTpxLuLeSwHKrhSu9JEQ1QQJ6nAb%2BaHxx4CJzcxkUgjmEMm1Ck2%2FihcJY%2Fczfd2J3oY%2Byc5LndiwHPHeSkhvn6SJSKdt2mMN21%2FACqoc9U%2BS0Unm%2BZE8qtR1r1n%2BUhsA9OLQfLcwg5POO1aUvPK%2Fcb5TtvKfw0S4%2B5mUe1A2eHvBDGYl27NnY3SQ1KKkST%2FprGI53rW1ay7GJwe31ZD0XzANB81%2BM65yIo7Si401D48ZJzggdpKsrRP%2Bbbb5K4lHN9e0X74DONnSJVAMI6HjsYGOo8Blg3nRBHck49%2FfXjKIrnJNRDhIbms5jdYZZhZunNAGywa36yMrqoXlzNm3g0dBYqS42ocy5bqTVJK08sd%2Bko6laGECITXR8L5Un9CGz9QYncSguPFefV43BXZyKO9Z0ZqVXG10n%2Fu0zLq3aUBdLh%2BVKWtXzFgCHIc%2FCF0uzoxmHL%2FPGJCITpiGKueG%2ByBZQw%3D&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20250912T114352Z&X-Amz-SignedHeaders=host&X-Amz-Expires=600&X-Amz-Credential=ASIARQRML75EQV6PP2I5%2F20250912%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Signature=f407079ef48ec4d77495b947143adf4914f9f05424f431d3fe973bb1d37e6d2f"
+    }
+}
