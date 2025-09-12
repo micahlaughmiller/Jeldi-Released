@@ -31,18 +31,34 @@ app.use((req: express.Request, res: express.Response, next: express.NextFunction
   // Set Vary: Origin header for proper CloudFront caching
   res.setHeader('Vary', 'Origin');
   
-  // Always set CORS headers to be more permissive
-  if (origin && allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
+  // More permissive CORS handling for development and production
+  if (origin) {
+    // Allow specific origins
+    if (allowedOrigins.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    // Allow all Replit domains
+    else if (origin.includes('replit.dev') || origin.includes('replit.app')) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    // Allow localhost for development
+    else if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
     // Fallback to wildcard for debugging
+    else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+  } else {
+    // No origin header - allow all (for server-to-server)
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
   
   // Set other CORS headers
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin,X-Requested-With');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin,X-Requested-With,Cache-Control,Pragma');
   res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,DELETE,OPTIONS,PATCH');
-  res.setHeader('Access-Control-Allow-Credentials', 'false');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
   
   // Handle preflight OPTIONS requests
   if (req.method === 'OPTIONS') {
