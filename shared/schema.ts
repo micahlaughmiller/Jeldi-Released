@@ -188,3 +188,42 @@ export type InsertOAuthSession = z.infer<typeof insertOAuthSessionSchema>;
 export type OAuthSession = typeof oauthSessions.$inferSelect;
 export type InsertChatHistory = z.infer<typeof insertChatHistorySchema>;
 export type ChatHistory = typeof chatHistory.$inferSelect;
+
+// Email API Response Types
+export interface EmailProviderStatus {
+  isConnected: boolean;
+  email?: string;
+}
+
+export interface EmailStatusResponse {
+  gmail?: EmailProviderStatus;
+  outlook?: EmailProviderStatus;
+}
+
+export interface EmailConnectResponse {
+  authUrl?: string;
+  isConnected?: boolean;
+  message?: string;
+}
+
+export interface EmailSendRequest {
+  provider: 'gmail' | 'outlook';
+  to: string[];
+  cc?: string[];
+  subject: string;
+  body: string;
+  isHtml?: boolean;
+  template?: string;
+  templateVariables?: {
+    recipient: string;
+    week: string;
+    kpis: any[];
+    insights: string[];
+  };
+}
+
+export interface EmailSendResponse {
+  success: boolean;
+  messageId?: string;
+  error?: string;
+}

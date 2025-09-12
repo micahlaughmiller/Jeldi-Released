@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { EmailStatusResponse, EmailSendRequest, EmailSendResponse } from "@shared/schema";
 
 interface EmailComposerProps {
   isOpen: boolean;
@@ -14,16 +16,59 @@ interface EmailComposerProps {
 }
 
 export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
-  const [provider, setProvider] = useState("gmail");
+  const [provider, setProvider] = useState<"outlook" | "gmail">("outlook");
   const [template, setTemplate] = useState("custom");
   const [to, setTo] = useState("");
+  const [cc, setCc] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isHtml, setIsHtml] = useState(false);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const handleSend = async () => {
-    if (!to || !subject || !body) {
+  // Fetch email status to determine available providers
+  const { data: emailStatus } = useQuery<EmailStatusResponse>({
+    queryKey: ['/api/email/status'],
+  });
+
+  // Fetch available templates
+  const { data: emailProviders } = useQuery({
+    queryKey: ['/api/email/providers'],
+  });
+
+  // Mutation for sending email
+  const sendEmailMutation = useMutation<EmailSendResponse, Error, EmailSendRequest>({
+    mutationFn: async (emailData: EmailSendRequest) => {
+      const response = await apiRequest("POST", "/api/email/send", emailData);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Email sent",
+        description: "Your email has been sent successfully",
+      });
+      onClose();
+      resetForm();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to send email",
+        description: error.message || "Failed to send email",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resetForm = () => {
+    setTo("");
+    setCc("");
+    setSubject("");
+    setBody("");
+    setTemplate("custom");
+  };
+
+  const handleSend = () => {
+    if (!to || (!subject && template === "custom") || (!body && template === "custom")) {
       toast({
         title: "Missing fields",
         description: "Please fill in all required fields",
@@ -32,35 +77,51 @@ export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
       return;
     }
 
-    setIsLoading(true);
-    try {
-      await apiRequest("POST", "/api/email/send", {
-        provider,
-        to,
-        subject,
-        body,
-        template: template !== "custom" ? template : undefined,
-      });
-
+    // Check if provider is available
+    const providerAvailable = (provider === "outlook" && emailStatus?.outlook?.isConnected) ||
+                             (provider === "gmail" && emailStatus?.gmail?.isConnected);
+    
+    if (!providerAvailable) {
       toast({
-        title: "Email sent",
-        description: "Your email has been sent successfully",
-      });
-
-      onClose();
-      setTo("");
-      setSubject("");
-      setBody("");
-    } catch (error) {
-      toast({
-        title: "Failed to send email",
-        description: (error as Error).message,
+        title: "Provider not connected",
+        description: `Please connect your ${provider} account first`,
         variant: "destructive",
       });
-    } finally {
-      setIsLoading(false);
+      return;
     }
+
+    const emailData = {
+      provider,
+      to: to.split(',').map(email => email.trim()),
+      cc: cc ? cc.split(',').map(email => email.trim()) : undefined,
+      subject,
+      body,
+      isHtml,
+      template: template !== "custom" ? template : undefined,
+      templateVariables: template !== "custom" ? {
+        recipient: to.split(',')[0],
+        week: new Date().toISOString().slice(0, 10),
+        kpis: [],
+        insights: ["Sample insight 1", "Sample insight 2"]
+      } : undefined,
+    };
+
+    sendEmailMutation.mutate(emailData);
   };
+
+  // Update provider selection when status changes
+  useEffect(() => {
+    if (emailStatus && provider in emailStatus) {
+      const currentProvider = emailStatus[provider as keyof EmailStatusResponse];
+      if (!currentProvider?.isConnected) {
+        if (emailStatus.outlook?.isConnected) {
+          setProvider("outlook");
+        } else if (emailStatus.gmail?.isConnected) {
+          setProvider("gmail");
+        }
+      }
+    }
+  }, [emailStatus, provider]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -73,13 +134,23 @@ export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Email Provider</Label>
-              <Select value={provider} onValueChange={setProvider}>
+              <Select value={provider} onValueChange={(value) => setProvider(value as "outlook" | "gmail")}>
                 <SelectTrigger data-testid="select-email-provider">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="gmail">Gmail</SelectItem>
-                  <SelectItem value="outlook">Outlook.com</SelectItem>
+                  <SelectItem 
+                    value="outlook" 
+                    disabled={!emailStatus?.outlook?.isConnected}
+                  >
+                    Outlook.com {emailStatus?.outlook?.isConnected ? "✓" : "(Not connected)"}
+                  </SelectItem>
+                  <SelectItem 
+                    value="gmail"
+                    disabled={!emailStatus?.gmail?.isConnected}
+                  >
+                    Gmail {emailStatus?.gmail?.isConnected ? "✓" : "(Not connected)"}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -104,10 +175,22 @@ export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
             <Input
               id="email-to"
               type="email"
-              placeholder="recipient@company.com"
+              placeholder="recipient@company.com (separate multiple with commas)"
               value={to}
               onChange={(e) => setTo(e.target.value)}
               data-testid="input-email-to"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="email-cc">CC (Optional)</Label>
+            <Input
+              id="email-cc"
+              type="email"
+              placeholder="cc@company.com (separate multiple with commas)"
+              value={cc}
+              onChange={(e) => setCc(e.target.value)}
+              data-testid="input-email-cc"
             />
           </div>
           
@@ -169,10 +252,10 @@ export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
               </Button>
               <Button 
                 onClick={handleSend} 
-                disabled={isLoading}
+                disabled={sendEmailMutation.isPending}
                 data-testid="button-send-email"
               >
-                {isLoading ? (
+                {sendEmailMutation.isPending ? (
                   <>
                     <i className="fas fa-spinner fa-spin mr-2"></i>
                     Sending...

@@ -395,19 +395,66 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.get("/api/email/providers", authenticateToken, async (req: any, res) => {
     try {
       const configurations = await emailService.getEmailConfigurations(req.user.id);
-      res.json({ configurations, providers: Object.values(emailService.getEmailTemplates()) });
+      
+      // Check Outlook connection status using Replit connector
+      const outlookStatus = await emailService.checkOutlookConnection();
+      
+      res.json({ 
+        configurations, 
+        templates: emailService.getEmailTemplates(),
+        connectionStatus: {
+          outlook: outlookStatus
+        }
+      });
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch email providers", error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/email/status", authenticateToken, async (req: any, res) => {
+    try {
+      const outlookStatus = await emailService.checkOutlookConnection();
+      const configurations = await emailService.getEmailConfigurations(req.user.id);
+      const gmailConfig = configurations.find(c => c.provider === 'gmail' && c.isActive);
+      
+      res.json({
+        outlook: outlookStatus,
+        gmail: {
+          isConnected: !!gmailConfig,
+          email: gmailConfig?.email
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to check email status", error: (error as Error).message });
     }
   });
 
   app.post("/api/email/connect/:provider", authenticateToken, async (req: any, res) => {
     try {
       const { provider } = req.params;
-      const redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/email/callback`;
       
-      const authUrl = await emailService.initiateEmailOAuth(provider, req.user.id, redirectUri);
-      res.json({ authUrl });
+      if (provider === 'outlook') {
+        // For Outlook, check if Replit connector is already set up
+        const outlookStatus = await emailService.checkOutlookConnection();
+        if (outlookStatus.isConnected) {
+          res.json({ 
+            message: "Outlook is already connected via Replit connector",
+            isConnected: true,
+            email: outlookStatus.email
+          });
+        } else {
+          res.status(400).json({ 
+            message: "Outlook connector not configured. Please set up the Outlook integration in your Replit project.",
+            requiresSetup: true
+          });
+        }
+      } else if (provider === 'gmail') {
+        const redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/email/callback`;
+        const authUrl = await emailService.initiateEmailOAuth(provider, req.user.id, redirectUri);
+        res.json({ authUrl });
+      } else {
+        res.status(400).json({ message: "Unsupported email provider" });
+      }
     } catch (error) {
       res.status(400).json({ message: "Failed to initiate email OAuth", error: (error as Error).message });
     }
@@ -431,22 +478,26 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.post("/api/email/send", authenticateToken, async (req: any, res) => {
     try {
-      const { provider, to, subject, body, template, templateVariables } = req.body;
+      const { provider, to, subject, body, template, templateVariables, isHtml } = req.body;
       
-      let emailMessage = { to: Array.isArray(to) ? to : [to], subject, body };
-      
-      // Use template if specified
-      if (template) {
-        const templates = emailService.getEmailTemplates();
-        const emailTemplate = templates[template];
-        if (emailTemplate) {
-          const rendered = emailService.renderTemplate(emailTemplate, templateVariables || {});
-          emailMessage.subject = rendered.subject;
-          emailMessage.body = rendered.body;
-        }
+      if (!provider || !to || (!subject && !template)) {
+        return res.status(400).json({ message: "Missing required fields: provider, to, and subject or template" });
       }
       
-      const success = await emailService.sendEmail(req.user.id, provider, emailMessage);
+      const emailMessage = { 
+        to: Array.isArray(to) ? to : [to], 
+        subject, 
+        body,
+        isHtml: isHtml || false
+      };
+      
+      const success = await emailService.sendEmail(
+        req.user.id, 
+        provider, 
+        emailMessage, 
+        template, 
+        templateVariables
+      );
       
       if (success) {
         res.json({ message: "Email sent successfully" });

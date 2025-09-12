@@ -8,17 +8,21 @@ import { apiRequest } from "@/lib/queryClient";
 import EmailComposer from "@/components/modals/email-composer";
 import Sidebar from "@/components/layout/sidebar";
 import Header from "@/components/layout/header";
-import type { User } from "@shared/schema";
+import type { User, EmailStatusResponse, EmailConnectResponse } from "@shared/schema";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 export default function EmailCenter() {
   const [, setLocation] = useLocation();
   const [user, setUser] = useState<User | null>(null);
   const [isComposerOpen, setIsComposerOpen] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState({
-    gmail: false,
-    outlook: false
-  });
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Fetch email status from API
+  const { data: emailStatus, isLoading, refetch } = useQuery<EmailStatusResponse>({
+    queryKey: ['/api/email/status'],
+    enabled: !!user,
+  });
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -44,11 +48,12 @@ export default function EmailCenter() {
     setLocation("/login");
   };
 
-  const handleConnectProvider = async (provider: 'gmail' | 'outlook') => {
-    try {
+  const connectProviderMutation = useMutation<EmailConnectResponse, Error, 'gmail' | 'outlook'>({
+    mutationFn: async (provider: 'gmail' | 'outlook') => {
       const response = await apiRequest("POST", `/api/email/connect/${provider}`, {});
-      const data = await response.json();
-      
+      return response.json();
+    },
+    onSuccess: (data, provider) => {
       if (data.authUrl) {
         // Open OAuth URL in new window
         window.open(data.authUrl, "_blank");
@@ -57,15 +62,43 @@ export default function EmailCenter() {
           title: "OAuth Started",
           description: `Please complete the ${provider} authentication in the new window`,
         });
+      } else if (data.isConnected) {
+        toast({
+          title: "Already Connected",
+          description: data.message || `${provider} is already connected`,
+        });
+        // Refresh the status
+        refetch();
       }
-    } catch (error) {
+    },
+    onError: (error: any) => {
       toast({
         title: "Connection failed",
-        description: (error as Error).message,
+        description: error.message || "Failed to connect email provider",
         variant: "destructive",
       });
-    }
+    },
+  });
+
+  const handleConnectProvider = (provider: 'gmail' | 'outlook') => {
+    connectProviderMutation.mutate(provider);
   };
+
+  // Listen for OAuth callback success
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'email_oauth_success') {
+        toast({
+          title: "Email Connected",
+          description: `${event.data.provider} has been connected successfully`,
+        });
+        refetch(); // Refresh status
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [toast, refetch]);
 
   if (!user) {
     return (
@@ -108,21 +141,27 @@ export default function EmailCenter() {
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-lg">Gmail</CardTitle>
-                  <Badge variant={connectionStatus.gmail ? "default" : "secondary"}>
-                    {connectionStatus.gmail ? "Connected" : "Disconnected"}
+                  <Badge variant={emailStatus?.gmail?.isConnected ? "default" : "secondary"}>
+                    {emailStatus?.gmail?.isConnected ? "Connected" : "Disconnected"}
                   </Badge>
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-4">
                     Connect your Gmail account to send emails directly from the platform
                   </p>
+                  {emailStatus?.gmail?.email && (
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Connected as: {emailStatus.gmail.email}
+                    </p>
+                  )}
                   <Button 
                     onClick={() => handleConnectProvider('gmail')}
-                    disabled={connectionStatus.gmail}
+                    disabled={emailStatus?.gmail?.isConnected || connectProviderMutation.isPending}
                     data-testid="button-connect-gmail"
                   >
                     <i className="fab fa-google mr-2"></i>
-                    {connectionStatus.gmail ? "Connected" : "Connect Gmail"}
+                    {connectProviderMutation.isPending ? "Connecting..." : 
+                     emailStatus?.gmail?.isConnected ? "Connected" : "Connect Gmail"}
                   </Button>
                 </CardContent>
               </Card>
@@ -130,21 +169,27 @@ export default function EmailCenter() {
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-lg">Outlook</CardTitle>
-                  <Badge variant={connectionStatus.outlook ? "default" : "secondary"}>
-                    {connectionStatus.outlook ? "Connected" : "Disconnected"}
+                  <Badge variant={emailStatus?.outlook?.isConnected ? "default" : "secondary"}>
+                    {emailStatus?.outlook?.isConnected ? "Connected" : "Disconnected"}
                   </Badge>
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-4">
                     Connect your Outlook account to send emails directly from the platform
                   </p>
+                  {emailStatus?.outlook?.email && (
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Connected as: {emailStatus.outlook.email}
+                    </p>
+                  )}
                   <Button 
                     onClick={() => handleConnectProvider('outlook')}
-                    disabled={connectionStatus.outlook}
+                    disabled={emailStatus?.outlook?.isConnected || connectProviderMutation.isPending}
                     data-testid="button-connect-outlook"
                   >
                     <i className="fab fa-microsoft mr-2"></i>
-                    {connectionStatus.outlook ? "Connected" : "Connect Outlook"}
+                    {connectProviderMutation.isPending ? "Connecting..." : 
+                     emailStatus?.outlook?.isConnected ? "Connected" : "Connect Outlook"}
                   </Button>
                 </CardContent>
               </Card>
