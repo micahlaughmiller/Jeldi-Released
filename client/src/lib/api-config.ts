@@ -1,7 +1,6 @@
 // API Configuration for production deployment
-export const API_BASE_URL = import.meta.env.PROD 
-  ? 'https://kpqqhqz2akdmklu23echtowfvq0bajsz.lambda-url.us-east-2.on.aws'
-  : '';
+// Force Lambda URL for ALL environments to bypass CloudFront CORS issues
+export const API_BASE_URL = 'https://kpqqhqz2akdmklu23echtowfvq0bajsz.lambda-url.us-east-2.on.aws';
 
 // Custom domain detection for future use
 export const isCustomDomain = () => {
