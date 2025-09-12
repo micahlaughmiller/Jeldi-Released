@@ -35,7 +35,7 @@ export const EMAIL_PROVIDERS: Record<string, EmailProvider> = {
     oauthConfig: {
       authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
       tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-      clientId: process.env.OUTLOOK_CLIENT_ID || "",
+      clientId: process.env.MICROSOFT_CLIENT_ID || "",
       scopes: ["https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read"]
     },
     sendEndpoint: "https://graph.microsoft.com/v1.0/me/sendMail"
