@@ -180,8 +180,8 @@ export default function Login() {
               <i className="fas fa-network-wired text-primary-foreground text-xl"></i>
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">ERP Connect Pro</h1>
-              <p className="text-sm text-muted-foreground">Unified Enterprise Hub</p>
+              <h1 className="text-2xl font-bold text-foreground">Jeldi</h1>
+              <p className="text-sm text-muted-foreground">Business Decisions at the Speed of Thought</p>
             </div>
           </div>
         </div>

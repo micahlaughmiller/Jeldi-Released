@@ -35,8 +35,8 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
             <i className="fas fa-network-wired text-primary-foreground text-sm"></i>
           </div>
           <div>
-            <h1 className="text-lg font-semibold">ERP Connect Pro</h1>
-            <p className="text-xs text-muted-foreground">Unified Enterprise Hub</p>
+            <h1 className="text-lg font-semibold">Jeldi</h1>
+            <p className="text-xs text-muted-foreground">Business Decisions at the Speed of Thought</p>
           </div>
         </div>
       </div>

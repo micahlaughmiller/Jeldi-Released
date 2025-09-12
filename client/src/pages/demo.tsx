@@ -175,7 +175,7 @@ export default function DemoPage() {
         <div className="container mx-auto px-6 py-8">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-4xl font-bold mb-2">ERP Connect Pro Demo</h1>
+              <h1 className="text-4xl font-bold mb-2">Jeldi Demo</h1>
               <p className="text-xl opacity-90">
                 Experience enterprise-grade ERP integration for a $200MM company
               </p>
