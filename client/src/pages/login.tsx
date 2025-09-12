@@ -129,6 +129,7 @@ export default function Login() {
     const password = formData.get("password") as string;
 
     try {
+      console.log("Attempting registration with:", { username, email: email.substring(0, 10) + "..." });
       const response = await apiRequest("POST", "/api/auth/register", { username, email, password });
       const data = await response.json();
       
@@ -142,9 +143,10 @@ export default function Login() {
       
       setLocation("/dashboard");
     } catch (error) {
+      console.error("Registration error:", error);
       toast({
-        title: "Registration failed",
-        description: (error as Error).message,
+        title: "Registration failed", 
+        description: `${(error as Error).message}. Please try again or contact support.`,
         variant: "destructive",
       });
     } finally {
