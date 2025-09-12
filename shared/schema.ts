@@ -56,13 +56,16 @@ export const kpiData = pgTable("kpi_data", {
 export const emailConfigurations = pgTable("email_configurations", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: uuid("user_id").references(() => users.id).notNull(),
-  provider: text("provider").notNull(), // gmail, outlook
+  provider: text("provider").notNull(), // gmail, outlook, smtp
   email: text("email").notNull(),
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
+  accessToken: text("access_token"), // encrypted
+  refreshToken: text("refresh_token"), // encrypted
   tokenExpiry: timestamp("token_expiry"),
+  scopes: text("scopes").array().default(sql`'{}'`), // OAuth scopes granted
   isActive: boolean("is_active").default(true).notNull(),
+  lastUsed: timestamp("last_used"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const oauthSessions = pgTable("oauth_sessions", {
@@ -160,6 +163,8 @@ export const insertKpiDataSchema = createInsertSchema(kpiData).omit({
 export const insertEmailConfigurationSchema = createInsertSchema(emailConfigurations).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
+  lastUsed: true,
 });
 
 export const insertOAuthSessionSchema = createInsertSchema(oauthSessions).omit({
@@ -227,3 +232,49 @@ export interface EmailSendResponse {
   messageId?: string;
   error?: string;
 }
+
+// Email API validation schemas for secure input handling
+const emailSchema = z.string().email({ message: "Invalid email address" });
+const emailArraySchema = z.array(emailSchema).min(1, { message: "At least one email address required" });
+const providerSchema = z.enum(["gmail", "outlook", "smtp"], { message: "Invalid email provider" });
+
+// Email send request schema with comprehensive validation
+export const emailSendRequestSchema = z.object({
+  provider: providerSchema,
+  to: z.union([emailSchema, emailArraySchema]).transform(val => Array.isArray(val) ? val : [val]),
+  cc: z.union([emailSchema, emailArraySchema]).transform(val => Array.isArray(val) ? val : [val]).optional(),
+  bcc: z.union([emailSchema, emailArraySchema]).transform(val => Array.isArray(val) ? val : [val]).optional(),
+  subject: z.string().min(1, { message: "Subject is required" }).max(500, { message: "Subject too long" }).optional(),
+  body: z.string().max(50000, { message: "Email body too long" }).optional(),
+  template: z.string().optional(),
+  templateVariables: z.record(z.any()).optional(),
+  isHtml: z.boolean().default(false)
+}).refine(data => data.subject || data.template, {
+  message: "Either subject or template must be provided",
+  path: ["subject"]
+});
+
+// SMTP configuration schema with secure Boolean parsing
+export const smtpConfigRequestSchema = z.object({
+  host: z.string().min(1, { message: "SMTP host is required" }),
+  port: z.coerce.number().int().min(1).max(65535, { message: "Invalid port number" }),
+  secure: z.union([
+    z.boolean(),
+    z.string().transform(val => {
+      if (val === "true" || val === "1") return true;
+      if (val === "false" || val === "0") return false;
+      throw new Error("Invalid secure value - must be true, false, 1, or 0");
+    })
+  ]).default(false),
+  username: z.string().min(1, { message: "Username is required" }),
+  password: z.string().min(1, { message: "Password is required" })
+});
+
+// Email provider connection schema
+export const emailProviderParamsSchema = z.object({
+  provider: providerSchema
+});
+
+export type EmailSendRequestValidated = z.infer<typeof emailSendRequestSchema>;
+export type SMTPConfigRequest = z.infer<typeof smtpConfigRequestSchema>;
+export type EmailProviderParams = z.infer<typeof emailProviderParamsSchema>;

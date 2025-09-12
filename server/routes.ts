@@ -5,7 +5,7 @@ import { storage } from "./storage";
 import { erpService } from "./services/erpService";
 import { emailService } from "./services/emailService";
 import { analyzeERPData, generateKPIInsights } from "./services/openai";
-import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema } from "@shared/schema";
+import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import passport from "passport";
@@ -431,7 +431,23 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.post("/api/email/connect/:provider", authenticateToken, async (req: any, res) => {
     try {
-      const { provider } = req.params;
+      // Validate provider parameter with Zod
+      const { provider } = emailProviderParamsSchema.parse(req.params);
+      
+      // Rate limiting check - prevent too many OAuth attempts
+      const recentConfigs = await emailService.getEmailConfigurations(req.user.id);
+      const recentAttempts = recentConfigs.filter(c => 
+        c.provider === provider && 
+        c.createdAt && 
+        (new Date().getTime() - new Date(c.createdAt).getTime()) < 5 * 60 * 1000 // 5 minutes
+      );
+      
+      if (recentAttempts.length > 3) {
+        return res.status(429).json({ 
+          message: "Too many connection attempts. Please wait before trying again.",
+          retryAfter: 300 // 5 minutes
+        });
+      }
       
       if (provider === 'outlook') {
         // For Outlook, check if Replit connector is already set up
@@ -451,12 +467,65 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       } else if (provider === 'gmail') {
         const redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/email/callback`;
         const authUrl = await emailService.initiateEmailOAuth(provider, req.user.id, redirectUri);
+        
+        // Audit log the OAuth attempt
+        console.log(`OAuth initiated for user ${req.user.id} with provider ${provider} at ${new Date().toISOString()}`);
+        
         res.json({ authUrl });
-      } else {
-        res.status(400).json({ message: "Unsupported email provider" });
+      } else if (provider === 'smtp') {
+        // Validate SMTP configuration data with Zod (fixes Boolean parsing vulnerability)
+        const smtpConfig = smtpConfigRequestSchema.parse(req.body);
+        
+        // Create SMTP configuration with encrypted credentials
+        const encryptedPassword = await emailService.encryptToken(smtpConfig.password);
+        const emailConfig = {
+          userId: req.user.id,
+          provider: 'smtp',
+          email: smtpConfig.username,
+          accessToken: JSON.stringify({
+            host: smtpConfig.host,
+            port: smtpConfig.port,
+            secure: smtpConfig.secure, // Properly parsed boolean from Zod
+            auth: {
+              user: smtpConfig.username,
+              pass: encryptedPassword
+            }
+          }),
+          isActive: true
+        };
+        
+        await storage.createEmailConfiguration(emailConfig);
+        
+        res.json({ 
+          message: "SMTP configuration saved successfully",
+          isConnected: true 
+        });
       }
     } catch (error) {
-      res.status(400).json({ message: "Failed to initiate email OAuth", error: (error as Error).message });
+      console.error('Email provider connection error:', error);
+      
+      // Handle Zod validation errors specifically
+      if (error instanceof Error && error.name === 'ZodError') {
+        return res.status(400).json({
+          message: "Invalid input data",
+          errors: (error as any).errors,
+          type: "validation_error"
+        });
+      }
+      
+      // Handle encryption errors
+      if (error instanceof Error && error.message.includes('Failed to encrypt')) {
+        return res.status(500).json({
+          message: "Security configuration error. Please contact support.",
+          type: "encryption_error"
+        });
+      }
+      
+      res.status(400).json({ 
+        message: "Failed to connect email provider", 
+        error: (error as Error).message,
+        type: "connection_error"
+      });
     }
   });
 
@@ -478,25 +547,42 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.post("/api/email/send", authenticateToken, async (req: any, res) => {
     try {
-      const { provider, to, subject, body, template, templateVariables, isHtml } = req.body;
+      // Secure input validation with Zod schemas
+      const emailRequest = emailSendRequestSchema.parse(req.body);
       
-      if (!provider || !to || (!subject && !template)) {
-        return res.status(400).json({ message: "Missing required fields: provider, to, and subject or template" });
+      // Enhanced rate limiting for email sending (10 emails/minute)
+      const rateLimitKey = `email_send_${req.user.id}`;
+      const now = Date.now();
+      const rateLimit = (global as any)[rateLimitKey] || [];
+      const recentSends = rateLimit.filter((timestamp: number) => now - timestamp < 60000); // 1 minute window
+      
+      if (recentSends.length >= 10) {
+        return res.status(429).json({ 
+          message: "Rate limit exceeded. Maximum 10 emails per minute.",
+          retryAfter: 60,
+          limit: 10,
+          windowMs: 60000
+        });
       }
       
+      recentSends.push(now);
+      (global as any)[rateLimitKey] = recentSends;
+      
       const emailMessage = { 
-        to: Array.isArray(to) ? to : [to], 
-        subject, 
-        body,
-        isHtml: isHtml || false
+        to: emailRequest.to,
+        cc: emailRequest.cc,
+        bcc: emailRequest.bcc,
+        subject: emailRequest.subject || '',
+        body: emailRequest.body || '',
+        isHtml: emailRequest.isHtml
       };
       
       const success = await emailService.sendEmail(
         req.user.id, 
-        provider, 
+        emailRequest.provider, 
         emailMessage, 
-        template, 
-        templateVariables
+        emailRequest.template, 
+        emailRequest.templateVariables
       );
       
       if (success) {
@@ -505,7 +591,55 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         res.status(500).json({ message: "Failed to send email" });
       }
     } catch (error) {
-      res.status(400).json({ message: "Failed to send email", error: (error as Error).message });
+      console.error('Email send error:', error);
+      
+      // Handle Zod validation errors
+      if (error instanceof Error && error.name === 'ZodError') {
+        return res.status(400).json({
+          message: "Invalid email data",
+          errors: (error as any).errors,
+          type: "validation_error"
+        });
+      }
+      
+      // Handle authentication errors
+      if (error instanceof Error && error.message.includes('authentication failed')) {
+        return res.status(401).json({
+          message: "Email provider authentication failed. Please reconnect your email account.",
+          type: "auth_error"
+        });
+      }
+      
+      // Handle rate limiting errors
+      if (error instanceof Error && error.message.includes('Rate limit')) {
+        return res.status(429).json({
+          message: "Too many email requests. Please try again later.",
+          type: "rate_limit_error"
+        });
+      }
+      
+      res.status(500).json({ 
+        message: "Failed to send email", 
+        error: (error as Error).message,
+        type: "send_error"
+      });
+    }
+  });
+
+  // Email templates endpoint for better API design
+  app.get("/api/email/templates", authenticateToken, async (req: any, res) => {
+    try {
+      const templates = emailService.getEmailTemplates();
+      res.json({ 
+        templates,
+        count: Object.keys(templates).length,
+        available: Object.keys(templates)
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        message: "Failed to fetch email templates", 
+        error: (error as Error).message 
+      });
     }
   });
 

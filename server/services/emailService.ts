@@ -1,6 +1,9 @@
 import { storage } from "../storage";
 import type { EmailConfiguration } from "@shared/schema";
 import { getUncachableOutlookClient } from "./outlookClient";
+import crypto from "crypto";
+import { promisify } from "util";
+import { getTokenEncryptionKey } from "../env-validation";
 
 export interface EmailProvider {
   name: string;
@@ -129,8 +132,127 @@ ERP Connect Pro`,
 };
 
 export class EmailService {
+  // Secure encryption key from environment - validated at startup
+  private readonly encryptionKey = getTokenEncryptionKey();
+
   async getEmailConfigurations(userId: string): Promise<EmailConfiguration[]> {
     return await storage.getEmailConfigurations(userId);
+  }
+
+  // Security helper methods for OAuth
+  generateSecureState(): string {
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  generateCodeVerifier(): string {
+    return crypto.randomBytes(32).toString('base64url');
+  }
+
+  async generateCodeChallenge(verifier: string): Promise<string> {
+    const hash = crypto.createHash('sha256').update(verifier).digest();
+    return hash.toString('base64url');
+  }
+
+  async encryptToken(token: string): Promise<string> {
+    try {
+      // Use AES-256-GCM for authenticated encryption
+      const algorithm = 'aes-256-gcm';
+      const iv = crypto.randomBytes(12); // GCM uses 12-byte IV
+      
+      // Derive 32-byte key from TOKEN_ENCRYPTION_KEY
+      const key = crypto.createHash('sha256').update(this.encryptionKey).digest();
+      
+      const cipher = crypto.createCipheriv(algorithm, key, iv);
+      
+      let encrypted = cipher.update(token, 'utf8', 'base64');
+      encrypted += cipher.final('base64');
+      
+      const authTag = cipher.getAuthTag();
+      
+      // Format: iv:ciphertext:authTag (all Base64 encoded)
+      return `${iv.toString('base64')}:${encrypted}:${authTag.toString('base64')}`;
+    } catch (error) {
+      console.error('Token encryption error:', error);
+      throw new Error('Failed to encrypt token');
+    }
+  }
+
+  async decryptToken(encryptedToken: string): Promise<string> {
+    try {
+      const parts = encryptedToken.split(':');
+      if (parts.length !== 3) {
+        throw new Error('Invalid encrypted token format - expected iv:ciphertext:authTag');
+      }
+      
+      const [ivBase64, encrypted, authTagBase64] = parts;
+      
+      const iv = Buffer.from(ivBase64, 'base64');
+      const authTag = Buffer.from(authTagBase64, 'base64');
+      
+      // Derive same 32-byte key
+      const key = crypto.createHash('sha256').update(this.encryptionKey).digest();
+      
+      const algorithm = 'aes-256-gcm';
+      const decipher = crypto.createDecipheriv(algorithm, key, iv);
+      decipher.setAuthTag(authTag);
+      
+      let decrypted = decipher.update(encrypted, 'base64', 'utf8');
+      decrypted += decipher.final('utf8');
+      
+      return decrypted;
+    } catch (error) {
+      console.error('Token decryption error:', error);
+      throw new Error('Failed to decrypt token - authentication failed or data corrupted');
+    }
+  }
+
+  // Email OAuth session management
+  async createEmailOAuthSession(provider: string, state: string, userId: string): Promise<void> {
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    await storage.createOAuthSession({
+      state,
+      provider: `email_${provider}`, // Prefix to distinguish from user auth
+      isCompleted: false,
+      expiresAt,
+      authResult: JSON.stringify({ userId })
+    });
+  }
+
+  async getEmailOAuthSessionByState(state: string): Promise<any> {
+    const session = await storage.getOAuthSessionByState(state);
+    if (!session || !session.provider.startsWith('email_')) {
+      return null;
+    }
+    
+    // Return structured session data
+    const authResult = session.authResult ? JSON.parse(session.authResult as string) : {};
+    return {
+      id: session.id,
+      provider: session.provider.replace('email_', ''),
+      userId: authResult.userId,
+      isCompleted: session.isCompleted,
+      expiresAt: session.expiresAt,
+      authResult
+    };
+  }
+
+  async updateEmailOAuthSession(state: string, updates: any): Promise<void> {
+    const session = await storage.getOAuthSessionByState(state);
+    if (!session) {
+      throw new Error('OAuth session not found');
+    }
+    
+    const currentResult = session.authResult ? JSON.parse(session.authResult as string) : {};
+    await storage.updateOAuthSession(session.id, {
+      authResult: JSON.stringify({ ...currentResult, ...updates })
+    });
+  }
+
+  async completeEmailOAuthSession(state: string): Promise<void> {
+    const session = await storage.getOAuthSessionByState(state);
+    if (session) {
+      await storage.updateOAuthSession(session.id, { isCompleted: true });
+    }
   }
 
   async checkOutlookConnection(): Promise<{ isConnected: boolean; email?: string }> {
@@ -153,6 +275,17 @@ export class EmailService {
       throw new Error(`Email provider ${provider} not supported`);
     }
 
+    // Validate redirect URI against allowlist
+    const allowedRedirectUris = [
+      process.env.EMAIL_OAUTH_REDIRECT_URI,
+      `${process.env.FRONTEND_URL || 'http://localhost:5000'}/api/email/callback`,
+      'http://localhost:5000/api/email/callback'
+    ].filter(Boolean);
+    
+    if (!allowedRedirectUris.includes(redirectUri)) {
+      throw new Error('Invalid redirect URI');
+    }
+
     // Create or update email configuration
     const existingConfig = await storage.getEmailConfigurations(userId);
     const existing = existingConfig.find(config => config.provider === provider);
@@ -166,24 +299,58 @@ export class EmailService {
       });
     }
 
-    // Generate OAuth URL
+    // Generate secure state using OAuthService and create session
+    const state = this.generateSecureState();
+    await this.createEmailOAuthSession(provider, state, userId);
+
+    // Generate OAuth URL with PKCE
+    const codeVerifier = this.generateCodeVerifier();
+    const codeChallenge = await this.generateCodeChallenge(codeVerifier);
+    
+    // Store code verifier in session for later use
+    await this.updateEmailOAuthSession(state, { codeVerifier });
+
     const params = new URLSearchParams({
       client_id: emailProvider.oauthConfig.clientId,
       response_type: "code",
       redirect_uri: redirectUri,
       scope: emailProvider.oauthConfig.scopes.join(" "),
-      state: `${userId}-${provider}-${Date.now()}`
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256'
     });
 
     return `${emailProvider.oauthConfig.authUrl}?${params.toString()}`;
   }
 
   async handleEmailOAuthCallback(code: string, state: string): Promise<EmailConfiguration> {
-    const [userId, provider] = state.split("-");
+    // Validate and get OAuth session
+    const session = await this.getEmailOAuthSessionByState(state);
+    if (!session || session.isCompleted || new Date() > session.expiresAt) {
+      throw new Error('Invalid or expired OAuth session');
+    }
+
+    const provider = session.provider;
+    const userId = session.userId;
+    const codeVerifier = session.authResult?.codeVerifier;
     const emailProvider = EMAIL_PROVIDERS[provider];
     
     if (!emailProvider) {
       throw new Error(`Invalid email provider: ${provider}`);
+    }
+
+    // Build token request with PKCE
+    const tokenParams: any = {
+      grant_type: "authorization_code",
+      client_id: emailProvider.oauthConfig.clientId,
+      code,
+      redirect_uri: process.env.EMAIL_OAUTH_REDIRECT_URI || "",
+      code_verifier: codeVerifier
+    };
+
+    // Only add client_secret if not using PKCE (for backward compatibility)
+    if (!codeVerifier) {
+      tokenParams.client_secret = process.env[`${provider.toUpperCase()}_CLIENT_SECRET`] || process.env.GOOGLE_CLIENT_SECRET || "";
     }
 
     // Exchange code for tokens
@@ -192,17 +359,12 @@ export class EmailService {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: emailProvider.oauthConfig.clientId,
-        client_secret: process.env[`${provider.toUpperCase()}_CLIENT_SECRET`] || process.env.GOOGLE_CLIENT_SECRET || "",
-        code,
-        redirect_uri: process.env.EMAIL_OAUTH_REDIRECT_URI || ""
-      }),
+      body: new URLSearchParams(tokenParams),
     });
 
     if (!tokenResponse.ok) {
-      throw new Error(`Failed to exchange code for tokens: ${tokenResponse.statusText}`);
+      const errorText = await tokenResponse.text();
+      throw new Error(`Failed to exchange code for tokens: ${tokenResponse.statusText} - ${errorText}`);
     }
 
     const tokens = await tokenResponse.json();
@@ -213,15 +375,23 @@ export class EmailService {
       const profileResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
         headers: { "Authorization": `Bearer ${tokens.access_token}` }
       });
-      const profile = await profileResponse.json();
-      userEmail = profile.emailAddress;
+      if (profileResponse.ok) {
+        const profile = await profileResponse.json();
+        userEmail = profile.emailAddress;
+      }
     } else if (provider === "outlook") {
       const profileResponse = await fetch("https://graph.microsoft.com/v1.0/me", {
         headers: { "Authorization": `Bearer ${tokens.access_token}` }
       });
-      const profile = await profileResponse.json();
-      userEmail = profile.mail || profile.userPrincipalName;
+      if (profileResponse.ok) {
+        const profile = await profileResponse.json();
+        userEmail = profile.mail || profile.userPrincipalName;
+      }
     }
+
+    // Encrypt tokens before storage
+    const encryptedAccessToken = await this.encryptToken(tokens.access_token);
+    const encryptedRefreshToken = tokens.refresh_token ? await this.encryptToken(tokens.refresh_token) : null;
 
     // Update email configuration
     const configurations = await storage.getEmailConfigurations(userId);
@@ -233,8 +403,8 @@ export class EmailService {
 
     const updatedConfig = await storage.updateEmailConfiguration(config.id, {
       email: userEmail,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
+      accessToken: encryptedAccessToken,
+      refreshToken: encryptedRefreshToken,
       tokenExpiry: new Date(Date.now() + (tokens.expires_in * 1000)),
       isActive: true
     });
@@ -242,6 +412,9 @@ export class EmailService {
     if (!updatedConfig) {
       throw new Error("Failed to update email configuration");
     }
+
+    // Mark OAuth session as completed and clean up
+    await this.completeEmailOAuthSession(state);
 
     return updatedConfig;
   }
@@ -268,8 +441,25 @@ export class EmailService {
         if (!config || !config.accessToken) {
           throw new Error(`Gmail not configured or not active`);
         }
+
+        // Check if token is expired and refresh if needed
+        if (config.tokenExpiry && config.tokenExpiry < new Date()) {
+          if (!config.refreshToken) {
+            throw new Error('Gmail access token expired and no refresh token available');
+          }
+          await this.refreshAccessToken(userId, provider, config.id);
+          // Re-fetch updated configuration
+          const updatedConfigs = await storage.getEmailConfigurations(userId);
+          const updatedConfig = updatedConfigs.find(c => c.id === config.id);
+          if (!updatedConfig?.accessToken) {
+            throw new Error('Failed to refresh Gmail access token');
+          }
+          config.accessToken = updatedConfig.accessToken;
+        }
         
-        return await this.sendGmailMessage(config.accessToken, finalMessage);
+        // Decrypt token before use
+        const decryptedToken = await this.decryptToken(config.accessToken);
+        return await this.sendGmailMessage(decryptedToken, finalMessage);
       } else if (provider === "outlook") {
         // Use Replit connector for Outlook
         return await this.sendOutlookMessage("", finalMessage); // Access token not needed with connector
@@ -301,15 +491,18 @@ export class EmailService {
         throw new Error('Invalid SMTP configuration');
       }
 
-      // For now, we'll use a basic implementation
-      // In a production environment, you'd want to use a proper SMTP library
+      // Decrypt SMTP password
+      const decryptedPassword = await this.decryptToken(smtpConfig.auth.pass);
       const emailContent = this.buildRFC2822Message(message);
       
-      // This is a simplified implementation - in production you'd use nodemailer or similar
-      console.log('SMTP Email would be sent with config:', smtpConfig.host);
-      console.log('Email content:', emailContent);
-      
-      return true; // Simplified for now
+      // Use Node.js built-in net module for SMTP
+      return await this.sendViaSMTP({
+        ...smtpConfig,
+        auth: {
+          ...smtpConfig.auth,
+          pass: decryptedPassword
+        }
+      }, emailContent);
     } catch (error) {
       console.error('Failed to send SMTP email:', error);
       return false;
@@ -386,14 +579,142 @@ export class EmailService {
     let subject = template.subject;
     let body = template.body;
 
-    // Simple template variable replacement
+    // Secure template variable replacement with sanitization
+    const allowedVariables = template.variables || [];
+    
     Object.keys(variables).forEach(key => {
+      // Only allow whitelisted variables
+      if (!allowedVariables.includes(key)) {
+        console.warn(`Template variable '${key}' not in allowed list for template`);
+        return;
+      }
+      
+      // Sanitize variable value to prevent injection
+      let sanitizedValue = String(variables[key])
+        .replace(/[<>&"']/g, (match) => {
+          const escapeMap: Record<string, string> = {
+            '<': '&lt;',
+            '>': '&gt;',
+            '&': '&amp;',
+            '"': '&quot;',
+            "'": '&#x27;'
+          };
+          return escapeMap[match] || match;
+        });
+      
       const regex = new RegExp(`{{${key}}}`, 'g');
-      subject = subject.replace(regex, String(variables[key]));
-      body = body.replace(regex, String(variables[key]));
+      subject = subject.replace(regex, sanitizedValue);
+      body = body.replace(regex, sanitizedValue);
     });
 
     return { subject, body };
+  }
+
+  // Token refresh implementation
+  async refreshAccessToken(userId: string, provider: string, configId: string): Promise<void> {
+    const configurations = await storage.getEmailConfigurations(userId);
+    const config = configurations.find(c => c.id === configId);
+    
+    if (!config || !config.refreshToken) {
+      throw new Error('No refresh token available');
+    }
+
+    const emailProvider = EMAIL_PROVIDERS[provider];
+    if (!emailProvider) {
+      throw new Error(`Email provider ${provider} not supported`);
+    }
+
+    try {
+      const decryptedRefreshToken = await this.decryptToken(config.refreshToken);
+      
+      const tokenResponse = await fetch(emailProvider.oauthConfig.tokenUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: emailProvider.oauthConfig.clientId,
+          client_secret: process.env[`${provider.toUpperCase()}_CLIENT_SECRET`] || process.env.GOOGLE_CLIENT_SECRET || "",
+          refresh_token: decryptedRefreshToken,
+        }),
+      });
+
+      if (!tokenResponse.ok) {
+        throw new Error(`Token refresh failed: ${tokenResponse.statusText}`);
+      }
+
+      const tokens = await tokenResponse.json();
+      
+      // Encrypt new tokens
+      const encryptedAccessToken = await this.encryptToken(tokens.access_token);
+      const encryptedRefreshToken = tokens.refresh_token ? await this.encryptToken(tokens.refresh_token) : config.refreshToken;
+
+      await storage.updateEmailConfiguration(configId, {
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
+        tokenExpiry: new Date(Date.now() + (tokens.expires_in * 1000))
+      });
+    } catch (error) {
+      console.error('Token refresh error:', error);
+      throw new Error('Failed to refresh access token');
+    }
+  }
+
+  // SMTP implementation using Node.js net module
+  private async sendViaSMTP(config: SMTPConfiguration, emailContent: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      const net = require('net');
+      const tls = require('tls');
+      
+      const client = config.secure 
+        ? tls.connect(config.port, config.host)
+        : net.createConnection(config.port, config.host);
+
+      let step = 0;
+      const commands = [
+        `HELO ${config.host}`,
+        'AUTH LOGIN',
+        Buffer.from(config.auth.user).toString('base64'),
+        Buffer.from(config.auth.pass).toString('base64'),
+        `MAIL FROM: <${config.auth.user}>`,
+        emailContent.match(/^To: (.+)$/m)?.[1]?.split(',').map((to: string) => `RCPT TO: <${to.trim()}>`),
+        'DATA',
+        emailContent,
+        '.',
+        'QUIT'
+      ].flat().filter(Boolean);
+
+      client.on('data', (data: Buffer) => {
+        const response = data.toString();
+        console.log('SMTP Response:', response);
+
+        if (response.startsWith('2') || response.startsWith('3')) {
+          if (step < commands.length) {
+            client.write(commands[step] + '\r\n');
+            step++;
+          } else {
+            client.end();
+            resolve(true);
+          }
+        } else {
+          client.end();
+          reject(new Error(`SMTP Error: ${response}`));
+        }
+      });
+
+      client.on('connect', () => {
+        console.log('Connected to SMTP server');
+      });
+
+      client.on('error', (err: Error) => {
+        reject(err);
+      });
+
+      client.on('end', () => {
+        resolve(step >= commands.length);
+      });
+    });
   }
 }
 

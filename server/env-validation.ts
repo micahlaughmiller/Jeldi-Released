@@ -24,6 +24,11 @@ const REQUIRED_ENV_VARS: RequiredEnvVar[] = [
     name: 'JWT_SECRET',
     description: 'Secret key for signing JWT tokens',
     example: 'openssl rand -base64 64'
+  },
+  {
+    name: 'TOKEN_ENCRYPTION_KEY',
+    description: '32-byte encryption key for securing OAuth tokens and sensitive data',
+    example: 'openssl rand -hex 32'
   }
 ];
 
@@ -109,4 +114,16 @@ export function getJwtSecret(): string {
     throw new Error('JWT_SECRET environment variable is not set. This should have been caught during startup validation.');
   }
   return secret;
+}
+
+/**
+ * Get token encryption key with guaranteed non-null return
+ * This function assumes environment has been validated
+ */
+export function getTokenEncryptionKey(): string {
+  const key = process.env.TOKEN_ENCRYPTION_KEY;
+  if (!key) {
+    throw new Error('TOKEN_ENCRYPTION_KEY environment variable is not set. This should have been caught during startup validation.');
+  }
+  return key;
 }

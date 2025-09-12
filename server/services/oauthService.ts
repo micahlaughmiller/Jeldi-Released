@@ -43,6 +43,7 @@ export class OAuthService {
     return crypto.randomBytes(32).toString('hex');
   }
 
+
   static async createOAuthSession(provider: string, state: string): Promise<void> {
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     await storage.createOAuthSession({
