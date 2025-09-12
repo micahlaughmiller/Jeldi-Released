@@ -1,5 +1,5 @@
-const express = require("express");
-const serverless = require("serverless-http");
+import express from "express";
+import serverless from "serverless-http";
 import type { APIGatewayProxyHandler, APIGatewayProxyEvent, Context } from "aws-lambda";
 import { registerRoutes } from "./routes";
 import { enforceEnvironmentValidation } from "./env-validation";
@@ -18,7 +18,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 // Global CORS middleware for proper preflight handling
-app.use((req, res, next) => {
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
   const allowedOrigins = [
     'https://d2k9wjgsy12ugk.cloudfront.net',  // Original CloudFront domain
     'https://demo.jeldi.app',                 // Custom domain for main app
@@ -50,7 +50,7 @@ app.use((req, res, next) => {
 });
 
 // Request logging middleware (without response body to prevent PII leakage)
-app.use((req, res, next) => {
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
   const start = Date.now();
   const path = req.path;
 
@@ -92,7 +92,7 @@ async function initializeAppOnce() {
       });
 
       // Health check endpoint
-      app.get("/health", (req, res) => {
+      app.get("/health", (req: express.Request, res: express.Response) => {
         res.json({ 
           status: "healthy", 
           timestamp: new Date().toISOString(),
