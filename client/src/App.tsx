@@ -8,6 +8,7 @@ import Login from "@/pages/login";
 import EmailCenter from "@/pages/email-center";
 import DemoPage from "@/pages/demo";
 import Settings from "@/pages/settings";
+import AIAssistant from "@/pages/ai-assistant";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -18,6 +19,8 @@ function Router() {
       <Route path="/demo" component={DemoPage} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/email" component={EmailCenter} />
+      <Route path="/ai-assistant" component={AIAssistant} />
+      <Route path="/assistant" component={AIAssistant} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>

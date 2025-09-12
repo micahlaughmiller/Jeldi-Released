@@ -78,13 +78,54 @@ export const oauthSessions = pgTable("oauth_sessions", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const conversations = pgTable("conversations", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  isFavorite: boolean("is_favorite").default(false).notNull(),
+  lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
+  messageCount: integer("message_count").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const chatHistory = pgTable("chat_history", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: uuid("conversation_id").references(() => conversations.id).notNull(),
   userId: uuid("user_id").references(() => users.id).notNull(),
   query: text("query").notNull(),
   response: text("response").notNull(),
+  insights: text("insights").array().default(sql`'{}'`),
+  recommendations: text("recommendations").array().default(sql`'{}'`),
+  dataUsed: text("data_used").array().default(sql`'{}'`),
   erpData: jsonb("erp_data"), // Context data used for the query
+  responseTime: integer("response_time"), // milliseconds
   timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+export const queryTemplates = pgTable("query_templates", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  query: text("query").notNull(),
+  category: text("category").notNull(), // financial, operational, performance, inventory, etc.
+  icon: text("icon").notNull(),
+  isSystem: boolean("is_system").default(true).notNull(), // system templates vs user-created
+  userId: uuid("user_id").references(() => users.id), // null for system templates
+  usageCount: integer("usage_count").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const favoriteQueries = pgTable("favorite_queries", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  query: text("query").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  category: text("category").notNull(),
+  usageCount: integer("usage_count").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const userPreferences = pgTable("user_preferences", {
@@ -123,8 +164,33 @@ export const userRelations = relations(users, ({ many, one }) => ({
   erpConnections: many(erpConnections),
   kpiConfigurations: many(kpiConfigurations),
   emailConfigurations: many(emailConfigurations),
+  conversations: many(conversations),
   chatHistory: many(chatHistory),
+  queryTemplates: many(queryTemplates),
+  favoriteQueries: many(favoriteQueries),
   preferences: one(userPreferences),
+}));
+
+export const conversationRelations = relations(conversations, ({ one, many }) => ({
+  user: one(users, {
+    fields: [conversations.userId],
+    references: [users.id],
+  }),
+  messages: many(chatHistory),
+}));
+
+export const queryTemplateRelations = relations(queryTemplates, ({ one }) => ({
+  user: one(users, {
+    fields: [queryTemplates.userId],
+    references: [users.id],
+  }),
+}));
+
+export const favoriteQueryRelations = relations(favoriteQueries, ({ one }) => ({
+  user: one(users, {
+    fields: [favoriteQueries.userId],
+    references: [users.id],
+  }),
 }));
 
 export const erpConnectionRelations = relations(erpConnections, ({ one }) => ({
@@ -160,6 +226,10 @@ export const chatHistoryRelations = relations(chatHistory, ({ one }) => ({
   user: one(users, {
     fields: [chatHistory.userId],
     references: [users.id],
+  }),
+  conversation: one(conversations, {
+    fields: [chatHistory.conversationId],
+    references: [conversations.id],
   }),
 }));
 
@@ -211,9 +281,29 @@ export const insertOAuthSessionSchema = createInsertSchema(oauthSessions).omit({
   createdAt: true,
 });
 
+export const insertConversationSchema = createInsertSchema(conversations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  lastMessageAt: true,
+  messageCount: true,
+});
+
 export const insertChatHistorySchema = createInsertSchema(chatHistory).omit({
   id: true,
   timestamp: true,
+});
+
+export const insertQueryTemplateSchema = createInsertSchema(queryTemplates).omit({
+  id: true,
+  createdAt: true,
+  usageCount: true,
+});
+
+export const insertFavoriteQuerySchema = createInsertSchema(favoriteQueries).omit({
+  id: true,
+  createdAt: true,
+  usageCount: true,
 });
 
 export const insertUserPreferencesSchema = createInsertSchema(userPreferences).omit({
@@ -240,8 +330,14 @@ export type InsertEmailConfiguration = z.infer<typeof insertEmailConfigurationSc
 export type EmailConfiguration = typeof emailConfigurations.$inferSelect;
 export type InsertOAuthSession = z.infer<typeof insertOAuthSessionSchema>;
 export type OAuthSession = typeof oauthSessions.$inferSelect;
+export type InsertConversation = z.infer<typeof insertConversationSchema>;
+export type Conversation = typeof conversations.$inferSelect;
 export type InsertChatHistory = z.infer<typeof insertChatHistorySchema>;
 export type ChatHistory = typeof chatHistory.$inferSelect;
+export type InsertQueryTemplate = z.infer<typeof insertQueryTemplateSchema>;
+export type QueryTemplate = typeof queryTemplates.$inferSelect;
+export type InsertFavoriteQuery = z.infer<typeof insertFavoriteQuerySchema>;
+export type FavoriteQuery = typeof favoriteQueries.$inferSelect;
 export type InsertUserPreferences = z.infer<typeof insertUserPreferencesSchema>;
 export type UpdateUserPreferences = z.infer<typeof updateUserPreferencesSchema>;
 export type UserPreferences = typeof userPreferences.$inferSelect;

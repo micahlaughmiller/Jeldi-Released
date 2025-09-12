@@ -1,9 +1,12 @@
 import { 
   users, erpConnections, kpiConfigurations, kpiData, emailConfigurations, chatHistory, oauthSessions, userPreferences,
+  conversations, queryTemplates, favoriteQueries,
   type User, type InsertUser, type InsertOAuthUser, type ErpConnection, type InsertErpConnection,
   type KpiConfiguration, type InsertKpiConfiguration, type KpiData, type InsertKpiData,
   type EmailConfiguration, type InsertEmailConfiguration, type ChatHistory, type InsertChatHistory,
-  type OAuthSession, type InsertOAuthSession, type UserPreferences, type InsertUserPreferences, type UpdateUserPreferences
+  type OAuthSession, type InsertOAuthSession, type UserPreferences, type InsertUserPreferences, type UpdateUserPreferences,
+  type Conversation, type InsertConversation, type QueryTemplate, type InsertQueryTemplate,
+  type FavoriteQuery, type InsertFavoriteQuery
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -48,9 +51,30 @@ export interface IStorage {
   createEmailConfiguration(config: InsertEmailConfiguration): Promise<EmailConfiguration>;
   updateEmailConfiguration(id: string, updates: Partial<EmailConfiguration>): Promise<EmailConfiguration | undefined>;
 
-  // Chat History operations
+  // Conversation operations
+  getConversations(userId: string, limit?: number): Promise<Conversation[]>;
+  getConversation(id: string): Promise<Conversation | undefined>;
+  createConversation(conversation: InsertConversation): Promise<Conversation>;
+  updateConversation(id: string, updates: Partial<Conversation>): Promise<Conversation | undefined>;
+  deleteConversation(id: string): Promise<boolean>;
+
+  // Enhanced Chat History operations
   getChatHistory(userId: string, limit?: number): Promise<ChatHistory[]>;
+  getChatHistoryByConversation(conversationId: string, limit?: number): Promise<ChatHistory[]>;
   createChatHistory(chat: InsertChatHistory): Promise<ChatHistory>;
+  deleteChatHistory(id: string): Promise<boolean>;
+
+  // Query Template operations
+  getQueryTemplates(category?: string): Promise<QueryTemplate[]>;
+  getUserQueryTemplates(userId: string): Promise<QueryTemplate[]>;
+  createQueryTemplate(template: InsertQueryTemplate): Promise<QueryTemplate>;
+  updateQueryTemplateUsage(id: string): Promise<void>;
+
+  // Favorite Query operations
+  getFavoriteQueries(userId: string, category?: string): Promise<FavoriteQuery[]>;
+  createFavoriteQuery(favorite: InsertFavoriteQuery): Promise<FavoriteQuery>;
+  deleteFavoriteQuery(id: string): Promise<boolean>;
+  updateFavoriteQueryUsage(id: string): Promise<void>;
 
   // User Preferences operations
   getUserPreferences(userId: string): Promise<UserPreferences | undefined>;
@@ -251,6 +275,112 @@ export class DatabaseStorage implements IStorage {
     // Delete existing preferences and create default ones
     await db.delete(userPreferences).where(eq(userPreferences.userId, userId));
     return await this.createUserPreferences({ userId });
+  }
+
+  // Conversation operations
+  async getConversations(userId: string, limit = 50): Promise<Conversation[]> {
+    return await db.select().from(conversations)
+      .where(eq(conversations.userId, userId))
+      .orderBy(desc(conversations.lastMessageAt))
+      .limit(limit);
+  }
+
+  async getConversation(id: string): Promise<Conversation | undefined> {
+    const [conversation] = await db.select().from(conversations).where(eq(conversations.id, id));
+    return conversation || undefined;
+  }
+
+  async createConversation(conversation: InsertConversation): Promise<Conversation> {
+    const [newConversation] = await db.insert(conversations).values(conversation).returning();
+    return newConversation;
+  }
+
+  async updateConversation(id: string, updates: Partial<Conversation>): Promise<Conversation | undefined> {
+    const [updated] = await db.update(conversations)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(conversations.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteConversation(id: string): Promise<boolean> {
+    // Delete related chat history first
+    await db.delete(chatHistory).where(eq(chatHistory.conversationId, id));
+    // Then delete the conversation
+    const result = await db.delete(conversations).where(eq(conversations.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  // Enhanced Chat History operations
+  async getChatHistoryByConversation(conversationId: string, limit = 100): Promise<ChatHistory[]> {
+    return await db.select().from(chatHistory)
+      .where(eq(chatHistory.conversationId, conversationId))
+      .orderBy(chatHistory.timestamp)
+      .limit(limit);
+  }
+
+  async deleteChatHistory(id: string): Promise<boolean> {
+    const result = await db.delete(chatHistory).where(eq(chatHistory.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  // Query Template operations
+  async getQueryTemplates(category?: string): Promise<QueryTemplate[]> {
+    if (category) {
+      return await db.select().from(queryTemplates)
+        .where(and(eq(queryTemplates.isSystem, true), eq(queryTemplates.category, category)))
+        .orderBy(desc(queryTemplates.usageCount));
+    }
+    
+    return await db.select().from(queryTemplates)
+      .where(eq(queryTemplates.isSystem, true))
+      .orderBy(desc(queryTemplates.usageCount));
+  }
+
+  async getUserQueryTemplates(userId: string): Promise<QueryTemplate[]> {
+    return await db.select().from(queryTemplates)
+      .where(eq(queryTemplates.userId, userId))
+      .orderBy(desc(queryTemplates.usageCount));
+  }
+
+  async createQueryTemplate(template: InsertQueryTemplate): Promise<QueryTemplate> {
+    const [newTemplate] = await db.insert(queryTemplates).values(template).returning();
+    return newTemplate;
+  }
+
+  async updateQueryTemplateUsage(id: string): Promise<void> {
+    await db.update(queryTemplates)
+      .set({ usageCount: sql`${queryTemplates.usageCount} + 1` })
+      .where(eq(queryTemplates.id, id));
+  }
+
+  // Favorite Query operations
+  async getFavoriteQueries(userId: string, category?: string): Promise<FavoriteQuery[]> {
+    if (category) {
+      return await db.select().from(favoriteQueries)
+        .where(and(eq(favoriteQueries.userId, userId), eq(favoriteQueries.category, category)))
+        .orderBy(desc(favoriteQueries.usageCount));
+    }
+    
+    return await db.select().from(favoriteQueries)
+      .where(eq(favoriteQueries.userId, userId))
+      .orderBy(desc(favoriteQueries.usageCount));
+  }
+
+  async createFavoriteQuery(favorite: InsertFavoriteQuery): Promise<FavoriteQuery> {
+    const [newFavorite] = await db.insert(favoriteQueries).values(favorite).returning();
+    return newFavorite;
+  }
+
+  async deleteFavoriteQuery(id: string): Promise<boolean> {
+    const result = await db.delete(favoriteQueries).where(eq(favoriteQueries.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async updateFavoriteQueryUsage(id: string): Promise<void> {
+    await db.update(favoriteQueries)
+      .set({ usageCount: sql`${favoriteQueries.usageCount} + 1` })
+      .where(eq(favoriteQueries.id, id));
   }
 }
 

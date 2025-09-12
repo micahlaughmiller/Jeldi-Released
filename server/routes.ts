@@ -167,6 +167,22 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
+  // Get current user info
+  app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
+    try {
+      const user = req.user;
+      res.json({ 
+        id: user.id, 
+        username: user.username, 
+        email: user.email, 
+        role: user.role,
+        authProvider: user.authProvider
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get user info", error: (error as Error).message });
+    }
+  });
+
   // OAuth routes
   app.get("/api/oauth/providers", async (req, res) => {
     try {
@@ -800,10 +816,24 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  // ChatGPT routes
+  // ChatGPT routes (Legacy - creates default conversation)
   app.post("/api/chat/query", authenticateToken, async (req: any, res) => {
     try {
       const { query } = req.body;
+      
+      // Create or get default conversation for legacy endpoint
+      let defaultConversation;
+      const conversations = await storage.getConversations(req.user.id, 1);
+      if (conversations.length === 0) {
+        defaultConversation = await storage.createConversation({
+          userId: req.user.id,
+          title: "Default Chat",
+          description: "Legacy chat conversation",
+          isFavorite: false
+        });
+      } else {
+        defaultConversation = conversations[0];
+      }
       
       // Get aggregated ERP data
       const erpData = await erpService.aggregateERPData(req.user.id);
@@ -826,12 +856,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         };
       }
       
-      // Save chat history
+      // Save chat history with proper conversationId
       await storage.createChatHistory({
+        conversationId: defaultConversation.id,
         userId: req.user.id,
         query,
         response: response.response,
-        erpData
+        erpData,
+        insights: response.insights || [],
+        recommendations: response.recommendations || [],
+        dataUsed: response.dataUsed || []
       });
       
       // Broadcast to WebSocket clients
@@ -855,6 +889,281 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.json(history);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch chat history", error: (error as Error).message });
+    }
+  });
+
+  // Conversation Management Routes
+  app.get("/api/conversations", authenticateToken, async (req: any, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const conversations = await storage.getConversations(req.user.id, limit);
+      res.json(conversations);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch conversations", error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/conversations/:id", authenticateToken, async (req: any, res) => {
+    try {
+      const conversation = await storage.getConversation(req.params.id);
+      if (!conversation) {
+        return res.status(404).json({ message: "Conversation not found" });
+      }
+      
+      // Check if user owns this conversation
+      if (conversation.userId !== req.user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const messages = await storage.getChatHistoryByConversation(conversation.id);
+      res.json({ ...conversation, messages });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch conversation", error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/conversations", authenticateToken, async (req: any, res) => {
+    try {
+      const { title, description } = req.body;
+      if (!title) {
+        return res.status(400).json({ message: "Conversation title is required" });
+      }
+
+      const conversation = await storage.createConversation({
+        userId: req.user.id,
+        title: title.slice(0, 100), // Limit title length
+        description: description?.slice(0, 500) // Limit description length
+      });
+
+      res.json(conversation);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create conversation", error: (error as Error).message });
+    }
+  });
+
+  app.put("/api/conversations/:id", authenticateToken, async (req: any, res) => {
+    try {
+      const conversation = await storage.getConversation(req.params.id);
+      if (!conversation) {
+        return res.status(404).json({ message: "Conversation not found" });
+      }
+      
+      // Check if user owns this conversation
+      if (conversation.userId !== req.user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const { title, description, isFavorite } = req.body;
+      const updates: Partial<typeof conversation> = {};
+      
+      if (title !== undefined) updates.title = title.slice(0, 100);
+      if (description !== undefined) updates.description = description?.slice(0, 500);
+      if (isFavorite !== undefined) updates.isFavorite = Boolean(isFavorite);
+
+      const updatedConversation = await storage.updateConversation(req.params.id, updates);
+      res.json(updatedConversation);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update conversation", error: (error as Error).message });
+    }
+  });
+
+  app.delete("/api/conversations/:id", authenticateToken, async (req: any, res) => {
+    try {
+      const conversation = await storage.getConversation(req.params.id);
+      if (!conversation) {
+        return res.status(404).json({ message: "Conversation not found" });
+      }
+      
+      // Check if user owns this conversation
+      if (conversation.userId !== req.user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const deleted = await storage.deleteConversation(req.params.id);
+      if (deleted) {
+        res.json({ message: "Conversation deleted successfully" });
+      } else {
+        res.status(500).json({ message: "Failed to delete conversation" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete conversation", error: (error as Error).message });
+    }
+  });
+
+  // Enhanced Chat with Conversation Support
+  app.post("/api/chat/conversations/:id/message", authenticateToken, async (req: any, res) => {
+    try {
+      const { query } = req.body;
+      const conversationId = req.params.id;
+      
+      // Verify conversation ownership
+      const conversation = await storage.getConversation(conversationId);
+      if (!conversation || conversation.userId !== req.user.id) {
+        return res.status(404).json({ message: "Conversation not found or access denied" });
+      }
+
+      // Get conversation context
+      const previousMessages = await storage.getChatHistoryByConversation(conversationId, 10);
+      
+      // Get aggregated ERP data
+      const erpData = await erpService.aggregateERPData(req.user.id);
+      
+      // Send to ChatGPT for analysis with context
+      const startTime = Date.now();
+      let response;
+      try {
+        response = await analyzeERPData({
+          query,
+          erpData,
+          userId: req.user.id
+        });
+      } catch (aiError) {
+        console.error('AI analysis failed:', aiError);
+        response = {
+          response: "AI analysis temporarily unavailable: " + (aiError as Error).message,
+          insights: [],
+          recommendations: [],
+          dataUsed: []
+        };
+      }
+      const responseTime = Date.now() - startTime;
+      
+      // Save chat history with enhanced data
+      await storage.createChatHistory({
+        conversationId,
+        userId: req.user.id,
+        query,
+        response: response.response,
+        insights: response.insights,
+        recommendations: response.recommendations,
+        dataUsed: response.dataUsed,
+        erpData,
+        responseTime
+      });
+
+      // Update conversation metadata
+      await storage.updateConversation(conversationId, {
+        lastMessageAt: new Date(),
+        messageCount: conversation.messageCount + 1
+      });
+
+      // Broadcast to WebSocket clients
+      const wsClient = wsClients.get(req.user.id);
+      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        wsClient.send(JSON.stringify({
+          type: 'chat_response',
+          conversationId,
+          data: response
+        }));
+      }
+      
+      res.json(response);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to process message", error: (error as Error).message });
+    }
+  });
+
+  // Query Templates Routes
+  app.get("/api/query-templates", authenticateToken, async (req: any, res) => {
+    try {
+      const category = req.query.category as string;
+      const systemTemplates = await storage.getQueryTemplates(category);
+      const userTemplates = await storage.getUserQueryTemplates(req.user.id);
+      
+      res.json({
+        system: systemTemplates,
+        user: userTemplates
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch query templates", error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/query-templates", authenticateToken, async (req: any, res) => {
+    try {
+      const { name, description, query, category, icon } = req.body;
+      
+      if (!name || !query || !category) {
+        return res.status(400).json({ message: "Name, query, and category are required" });
+      }
+
+      const template = await storage.createQueryTemplate({
+        name: name.slice(0, 100),
+        description: description?.slice(0, 500),
+        query: query.slice(0, 2000),
+        category: category.slice(0, 50),
+        icon: icon || "fas fa-question-circle",
+        isSystem: false,
+        userId: req.user.id
+      });
+
+      res.json(template);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create query template", error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/query-templates/:id/use", authenticateToken, async (req: any, res) => {
+    try {
+      await storage.updateQueryTemplateUsage(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update template usage", error: (error as Error).message });
+    }
+  });
+
+  // Favorite Queries Routes
+  app.get("/api/favorite-queries", authenticateToken, async (req: any, res) => {
+    try {
+      const category = req.query.category as string;
+      const favorites = await storage.getFavoriteQueries(req.user.id, category);
+      res.json(favorites);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch favorite queries", error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/favorite-queries", authenticateToken, async (req: any, res) => {
+    try {
+      const { query, title, description, category } = req.body;
+      
+      if (!query || !title || !category) {
+        return res.status(400).json({ message: "Query, title, and category are required" });
+      }
+
+      const favorite = await storage.createFavoriteQuery({
+        userId: req.user.id,
+        query: query.slice(0, 2000),
+        title: title.slice(0, 100),
+        description: description?.slice(0, 500),
+        category: category.slice(0, 50)
+      });
+
+      res.json(favorite);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to save favorite query", error: (error as Error).message });
+    }
+  });
+
+  app.delete("/api/favorite-queries/:id", authenticateToken, async (req: any, res) => {
+    try {
+      const deleted = await storage.deleteFavoriteQuery(req.params.id);
+      if (deleted) {
+        res.json({ message: "Favorite query deleted successfully" });
+      } else {
+        res.status(404).json({ message: "Favorite query not found" });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete favorite query", error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/favorite-queries/:id/use", authenticateToken, async (req: any, res) => {
+    try {
+      await storage.updateFavoriteQueryUsage(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update favorite usage", error: (error as Error).message });
     }
   });
 

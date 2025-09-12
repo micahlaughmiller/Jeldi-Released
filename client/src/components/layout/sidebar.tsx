@@ -84,9 +84,16 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
         </Link>
         
         <Link href="/ai-assistant">
-          <a className="flex items-center space-x-3 px-3 py-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+          <a 
+            className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+              location === "/ai-assistant" || location === "/assistant"
+                ? "bg-primary text-primary-foreground" 
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            }`}
+            data-testid="nav-ai-assistant"
+          >
             <i className="fas fa-robot w-4"></i>
-            <span>AI Assistant</span>
+            <span className="font-medium">AI Assistant</span>
           </a>
         </Link>
         
