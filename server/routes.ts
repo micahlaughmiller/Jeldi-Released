@@ -529,6 +529,102 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
+  // Real-time polling endpoints for Lambda compatibility
+  app.get("/api/realtime/kpi-updates", authenticateToken, async (req: any, res) => {
+    try {
+      // Fetch latest KPI data (same logic as WebSocket implementation)
+      const kpis = await storage.getKpiConfigurations(req.user.id);
+      const kpiUpdates = [];
+      
+      for (const kpi of kpis.slice(0, 5)) { // Limit to 5 KPIs for performance
+        const latestData = await storage.getLatestKpiData(kpi.id);
+        if (latestData) {
+          kpiUpdates.push({
+            id: kpi.id,
+            name: kpi.name,
+            type: kpi.type,
+            value: latestData.value,
+            change: latestData.change,
+            timestamp: latestData.timestamp
+          });
+        }
+      }
+      
+      res.json({
+        type: 'kpi_update',
+        data: kpiUpdates,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        message: "Failed to fetch KPI updates", 
+        error: (error as Error).message 
+      });
+    }
+  });
+
+  app.get("/api/realtime/erp-status", authenticateToken, async (req: any, res) => {
+    try {
+      // Fetch ERP systems status (same logic as WebSocket implementation)
+      const systems = await erpService.getConnectedSystems(req.user.id);
+      const erpSystems = systems.map(system => ({
+        name: system.name,
+        displayName: system.displayName,
+        description: system.description,
+        isConnected: system.isConnected,
+        lastSync: system.lastSync,
+        status: system.isConnected ? "active" : "inactive"
+      }));
+      
+      res.json({
+        type: 'erp_status_update',
+        data: erpSystems,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        message: "Failed to fetch ERP status", 
+        error: (error as Error).message 
+      });
+    }
+  });
+
+  app.get("/api/realtime/insights", authenticateToken, async (req: any, res) => {
+    try {
+      // Generate insights for real-time updates
+      const kpis = await storage.getKpiConfigurations(req.user.id);
+      const kpiData: Record<string, any> = {};
+      
+      for (const kpi of kpis) {
+        const latestData = await storage.getLatestKpiData(kpi.id);
+        if (latestData) {
+          kpiData[kpi.name] = {
+            value: latestData.value,
+            change: latestData.change,
+            type: kpi.type
+          };
+        }
+      }
+      
+      const insights = await generateKPIInsights(kpiData);
+      
+      res.json({
+        type: 'insights_update',
+        data: {
+          summary: insights.summary || "",
+          alerts: insights.alerts || [],
+          trends: insights.trends || []
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        message: "Failed to generate insights", 
+        error: (error as Error).message 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
 
   // WebSocket server setup (skip in Lambda environment)

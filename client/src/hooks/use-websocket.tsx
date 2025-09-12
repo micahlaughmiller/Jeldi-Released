@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
+// DEPRECATED: This WebSocket hook has been replaced with polling-based real-time data
+// in useRealtimeData for Lambda compatibility. This file is kept for backwards compatibility
+// but should not be used in new code.
+
 export interface WebSocketMessage {
   type: string;
   data?: any;

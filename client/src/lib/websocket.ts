@@ -1,3 +1,7 @@
+// DEPRECATED: This WebSocket client has been replaced with polling-based real-time data
+// for Lambda compatibility. This file is kept for backwards compatibility but should 
+// not be used in new code. Use the polling-based useRealtimeData hook instead.
+
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
