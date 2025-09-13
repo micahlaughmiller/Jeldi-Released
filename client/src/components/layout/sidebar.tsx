@@ -97,19 +97,44 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
           </a>
         </Link>
         
-        <Link href="/admin/roles">
-          <a 
-            className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
-              location === "/admin/roles" 
-                ? "bg-primary text-primary-foreground" 
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            }`}
-            data-testid="nav-role-management"
-          >
-            <i className="fas fa-users-cog w-4"></i>
-            <span>Role Management</span>
-          </a>
-        </Link>
+        {/* Admin Section - Only show for admin users */}
+        {user.role === "admin" && (
+          <>
+            <div className="pt-4 pb-2">
+              <p className="px-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Administration
+              </p>
+            </div>
+            
+            <Link href="/admin">
+              <a 
+                className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+                  location === "/admin" || location === "/admin/dashboard"
+                    ? "bg-primary text-primary-foreground" 
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                }`}
+                data-testid="nav-admin-dashboard"
+              >
+                <i className="fas fa-shield-alt w-4"></i>
+                <span className="font-medium">Admin Dashboard</span>
+              </a>
+            </Link>
+            
+            <Link href="/admin/roles">
+              <a 
+                className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+                  location === "/admin/roles" 
+                    ? "bg-primary text-primary-foreground" 
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                }`}
+                data-testid="nav-role-management"
+              >
+                <i className="fas fa-users-cog w-4"></i>
+                <span>Role Management</span>
+              </a>
+            </Link>
+          </>
+        )}
         
         <Link href="/settings">
           <a 

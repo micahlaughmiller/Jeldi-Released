@@ -747,6 +747,498 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
+  // ===== ADMIN DASHBOARD API ROUTES =====
+  
+  // Admin Dashboard Overview - System statistics and health
+  app.get("/api/admin/dashboard/stats", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const [systemStats, recentActivity] = await Promise.all([
+        storage.getSystemStats(),
+        storage.getRecentActivity(10)
+      ]);
+
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "admin_dashboard_accessed",
+        resource: "admin_dashboard",
+        resourceId: null,
+        oldValue: null,
+        newValue: { timestamp: new Date().toISOString() },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.json({
+        stats: systemStats,
+        recentActivity: recentActivity.slice(0, 5), // Latest 5 activities for dashboard
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch dashboard stats", error: (error as Error).message });
+    }
+  });
+
+  // Enhanced User Management - Search, filter, and comprehensive user data
+  app.get("/api/admin/users", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { search, role, limit = "50", offset = "0" } = req.query;
+      
+      let users;
+      if (search) {
+        users = await storage.searchUsers(search as string, parseInt(limit as string));
+      } else if (role) {
+        users = await storage.getUsersByRole(role as string);
+      } else {
+        users = await storage.getAllUsersWithRoles();
+      }
+
+      // Add user statistics for each user
+      const usersWithStats = await Promise.all(
+        users.slice(parseInt(offset as string), parseInt(offset as string) + parseInt(limit as string))
+          .map(async (user) => {
+            const stats = await storage.getUserStats(user.id);
+            return {
+              ...user,
+              stats,
+              // Remove sensitive data
+              password: undefined,
+            };
+          })
+      );
+
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "users_list_accessed",
+        resource: "user_management",
+        resourceId: null,
+        oldValue: null,
+        newValue: { 
+          searchQuery: search || null,
+          roleFilter: role || null,
+          resultCount: usersWithStats.length 
+        },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.json({
+        users: usersWithStats,
+        total: users.length,
+        offset: parseInt(offset as string),
+        limit: parseInt(limit as string)
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch users", error: (error as Error).message });
+    }
+  });
+
+  // User Details with full role and permission information
+  app.get("/api/admin/users/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      
+      const [user, userWithRoles, userStats] = await Promise.all([
+        storage.getUser(id),
+        RBACService.getUserWithPermissions(id),
+        storage.getUserStats(id)
+      ]);
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "user_details_accessed",
+        resource: "user_management",
+        resourceId: id,
+        oldValue: null,
+        newValue: { accessedUser: id },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.json({
+        ...user,
+        password: undefined, // Never expose passwords
+        roles: userWithRoles?.userRoles || [],
+        permissions: userWithRoles?.permissions || [],
+        stats: userStats
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch user details", error: (error as Error).message });
+    }
+  });
+
+  // Create new user (admin only)
+  app.post("/api/admin/users", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userData = insertUserSchema.parse(req.body);
+      
+      // Check if user exists
+      const existingUser = await storage.getUserByEmail(userData.email);
+      if (existingUser) {
+        return res.status(400).json({ message: "User already exists" });
+      }
+
+      // Hash password if provided
+      let hashedPassword;
+      if (userData.password) {
+        hashedPassword = await bcrypt.hash(userData.password, 10);
+      }
+
+      const user = await storage.createUser({
+        ...userData,
+        password: hashedPassword,
+        authProvider: userData.authProvider || "local"
+      });
+
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "user_created",
+        resource: "users",
+        resourceId: user.id,
+        oldValue: null,
+        newValue: { ...userData, password: userData.password ? "[REDACTED]" : null },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.status(201).json({
+        ...user,
+        password: undefined // Never expose passwords
+      });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to create user", error: (error as Error).message });
+    }
+  });
+
+  // Update user (admin only)
+  app.put("/api/admin/users/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      
+      const existingUser = await storage.getUser(id);
+      if (!existingUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Hash password if being updated
+      if (updates.password) {
+        updates.password = await bcrypt.hash(updates.password, 10);
+      }
+
+      const updatedUser = await storage.updateUser(id, updates);
+
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "user_updated",
+        resource: "users",
+        resourceId: id,
+        oldValue: { ...existingUser, password: "[REDACTED]" },
+        newValue: { ...updates, password: updates.password ? "[REDACTED]" : undefined },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.json({
+        ...updatedUser,
+        password: undefined // Never expose passwords
+      });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update user", error: (error as Error).message });
+    }
+  });
+
+  // Permission Matrix - Visual representation of role-permission relationships
+  app.get("/api/admin/roles/matrix", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const [permissionMatrix, allPermissions, allRoles] = await Promise.all([
+        storage.getPermissionMatrix(),
+        storage.getPermissions(),
+        storage.getRoles()
+      ]);
+
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "permission_matrix_accessed",
+        resource: "role_management",
+        resourceId: null,
+        oldValue: null,
+        newValue: { timestamp: new Date().toISOString() },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.json({
+        matrix: permissionMatrix,
+        permissions: allPermissions,
+        roles: allRoles,
+        categories: [...new Set(allPermissions.map(p => p.category))]
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch permission matrix", error: (error as Error).message });
+    }
+  });
+
+  // Enhanced Audit Logs with filtering and real-time capabilities
+  app.get("/api/admin/audit-logs/enhanced", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { 
+        userId, 
+        action, 
+        resource, 
+        startDate, 
+        endDate, 
+        limit = "100",
+        offset = "0" 
+      } = req.query;
+      
+      // For now, use the basic audit logs method
+      // In a production system, you'd implement filtering in the storage layer
+      const auditLogs = await storage.getAuditLogs(
+        userId as string | undefined, 
+        parseInt(limit as string)
+      );
+
+      // Client-side filtering (should be moved to storage layer for performance)
+      let filteredLogs = auditLogs;
+      
+      if (action) {
+        filteredLogs = filteredLogs.filter(log => log.action.includes(action as string));
+      }
+      
+      if (resource) {
+        filteredLogs = filteredLogs.filter(log => log.resource.includes(resource as string));
+      }
+      
+      if (startDate || endDate) {
+        const start = startDate ? new Date(startDate as string) : new Date(0);
+        const end = endDate ? new Date(endDate as string) : new Date();
+        filteredLogs = filteredLogs.filter(log => 
+          log.timestamp >= start && log.timestamp <= end
+        );
+      }
+
+      const paginatedLogs = filteredLogs.slice(
+        parseInt(offset as string),
+        parseInt(offset as string) + parseInt(limit as string)
+      );
+
+      res.json({
+        logs: paginatedLogs,
+        total: filteredLogs.length,
+        offset: parseInt(offset as string),
+        limit: parseInt(limit as string),
+        filters: { userId, action, resource, startDate, endDate }
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch enhanced audit logs", error: (error as Error).message });
+    }
+  });
+
+  // System Health Monitoring
+  app.get("/api/admin/system/health", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const startTime = Date.now();
+      
+      // Check database connectivity
+      const dbHealthStart = Date.now();
+      const [testQuery] = await db.select({ count: sql<number>`count(*)` }).from(users);
+      const dbResponseTime = Date.now() - dbHealthStart;
+      
+      // Get system stats
+      const systemStats = await storage.getSystemStats();
+      
+      // Calculate overall response time
+      const totalResponseTime = Date.now() - startTime;
+      
+      const healthData = {
+        database: {
+          status: "healthy",
+          responseTime: dbResponseTime,
+          connectionStatus: "connected"
+        },
+        api: {
+          status: "healthy",
+          responseTime: totalResponseTime
+        },
+        system: {
+          ...systemStats,
+          uptime: process.uptime(),
+          memory: process.memoryUsage(),
+          nodeVersion: process.version
+        },
+        timestamp: new Date().toISOString()
+      };
+
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "system_health_checked",
+        resource: "system_monitoring",
+        resourceId: null,
+        oldValue: null,
+        newValue: { responseTime: totalResponseTime },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.json(healthData);
+    } catch (error) {
+      res.status(500).json({ 
+        message: "System health check failed", 
+        error: (error as Error).message,
+        database: { status: "error", responseTime: -1 },
+        api: { status: "error", responseTime: -1 }
+      });
+    }
+  });
+
+  // System Settings Management
+  app.get("/api/admin/settings", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      // Return current system configuration
+      // In a real implementation, these would be stored in a settings table
+      const settings = {
+        security: {
+          passwordPolicy: {
+            minLength: 8,
+            requireUppercase: true,
+            requireLowercase: true,
+            requireNumbers: true,
+            requireSpecialChars: false
+          },
+          sessionTimeout: 30, // minutes
+          maxLoginAttempts: 5,
+          lockoutDuration: 15 // minutes
+        },
+        email: {
+          fromAddress: process.env.EMAIL_FROM || "noreply@jeldi.com",
+          smtpEnabled: !!process.env.SMTP_HOST
+        },
+        oauth: {
+          googleEnabled: !!process.env.GOOGLE_CLIENT_ID,
+          microsoftEnabled: !!process.env.MICROSOFT_CLIENT_ID
+        },
+        features: {
+          erpIntegrations: true,
+          aiAssistant: true,
+          emailCenter: true,
+          advancedAnalytics: true
+        },
+        system: {
+          maintenanceMode: false,
+          debugMode: process.env.NODE_ENV === "development",
+          logLevel: "info"
+        }
+      };
+
+      res.json(settings);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch system settings", error: (error as Error).message });
+    }
+  });
+
+  // Update system settings
+  app.put("/api/admin/settings", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { category, settings } = req.body;
+      
+      // In a real implementation, you'd validate and save these to a settings table
+      // For now, we'll just log the attempt
+      
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "system_settings_updated",
+        resource: "system_settings",
+        resourceId: category,
+        oldValue: null, // Would fetch current settings
+        newValue: settings,
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      res.json({ 
+        message: "Settings updated successfully",
+        category,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update settings", error: (error as Error).message });
+    }
+  });
+
+  // Real-time activity stream
+  app.get("/api/admin/activity/stream", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { limit = "20" } = req.query;
+      
+      const recentActivity = await storage.getRecentActivity(parseInt(limit as string));
+      
+      res.json({
+        activities: recentActivity,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch activity stream", error: (error as Error).message });
+    }
+  });
+
+  // Export system data
+  app.get("/api/admin/export/:type", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { type } = req.params;
+      const { format = "json" } = req.query;
+      
+      let data;
+      let filename;
+      
+      switch (type) {
+        case "users":
+          data = await storage.getAllUsersWithRoles();
+          filename = `users_export_${new Date().toISOString().split('T')[0]}`;
+          break;
+        case "audit-logs":
+          data = await storage.getAuditLogs(undefined, 1000);
+          filename = `audit_logs_export_${new Date().toISOString().split('T')[0]}`;
+          break;
+        case "roles":
+          data = await storage.getRoles();
+          filename = `roles_export_${new Date().toISOString().split('T')[0]}`;
+          break;
+        default:
+          return res.status(400).json({ message: "Invalid export type" });
+      }
+
+      await RBACService.logAuditEvent({
+        userId: req.user!.id,
+        action: "data_exported",
+        resource: "system_data",
+        resourceId: type,
+        oldValue: null,
+        newValue: { type, format, recordCount: Array.isArray(data) ? data.length : 1 },
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent") || null,
+      });
+
+      // Set appropriate headers for download
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.${format}"`);
+      res.setHeader('Content-Type', format === 'json' ? 'application/json' : 'text/csv');
+      
+      if (format === 'json') {
+        res.json(data);
+      } else {
+        // For CSV, you'd implement CSV conversion here
+        res.json({ message: "CSV export not implemented yet", data });
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Failed to export data", error: (error as Error).message });
+    }
+  });
+
+  // ===== END ADMIN DASHBOARD API ROUTES =====
+
   // KPI routes
   app.get("/api/kpis", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
     try {

@@ -118,6 +118,30 @@ export interface IStorage {
   // Audit Log operations
   createAuditLog(auditData: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(userId?: string, limit?: number): Promise<AuditLog[]>;
+
+  // Admin Dashboard operations
+  getAllUsersWithRoles(): Promise<(User & { userRoles: (UserRole & { role: Role })[] })[]>;
+  getSystemStats(): Promise<{
+    totalUsers: number;
+    activeUsers: number;
+    totalRoles: number;
+    totalPermissions: number;
+    recentLogins: number;
+  }>;
+  getRecentActivity(limit?: number): Promise<AuditLog[]>;
+  getUserStats(userId: string): Promise<{
+    loginCount: number;
+    lastLogin?: Date;
+    sessionDuration?: number;
+    actionsCount: number;
+  }>;
+  getPermissionMatrix(): Promise<Array<{
+    roleId: string;
+    roleName: string;
+    permissions: Permission[];
+  }>>;
+  searchUsers(query: string, limit?: number): Promise<User[]>;
+  getUsersByRole(roleId: string): Promise<User[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -682,6 +706,153 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(auditLog)
       .orderBy(desc(auditLog.timestamp))
       .limit(limit);
+  }
+
+  // Admin Dashboard operations
+  async getAllUsersWithRoles(): Promise<(User & { userRoles: (UserRole & { role: Role })[] })[]> {
+    const allUsers = await db.select().from(users);
+    
+    const usersWithRoles = await Promise.all(
+      allUsers.map(async (user) => {
+        const userRoles = await this.getUserRoles(user.id);
+        return {
+          ...user,
+          userRoles,
+        };
+      })
+    );
+    
+    return usersWithRoles;
+  }
+
+  async getSystemStats(): Promise<{
+    totalUsers: number;
+    activeUsers: number;
+    totalRoles: number;
+    totalPermissions: number;
+    recentLogins: number;
+  }> {
+    const [totalUsersResult] = await db.select({ count: sql<number>`count(*)` }).from(users);
+    const [totalRolesResult] = await db.select({ count: sql<number>`count(*)` }).from(roles);
+    const [totalPermissionsResult] = await db.select({ count: sql<number>`count(*)` }).from(permissions);
+    
+    // Active users (users who have logged in within the last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const [recentLoginsResult] = await db.select({ count: sql<number>`count(*)` })
+      .from(auditLog)
+      .where(and(
+        eq(auditLog.action, 'user_login'),
+        sql`${auditLog.timestamp} > ${thirtyDaysAgo}`
+      ));
+
+    // For active users, let's count unique users who have any activity in the last 30 days
+    const [activeUsersResult] = await db.select({ count: sql<number>`count(distinct ${auditLog.userId})` })
+      .from(auditLog)
+      .where(sql`${auditLog.timestamp} > ${thirtyDaysAgo}`);
+
+    return {
+      totalUsers: totalUsersResult.count,
+      activeUsers: activeUsersResult.count || 0,
+      totalRoles: totalRolesResult.count,
+      totalPermissions: totalPermissionsResult.count,
+      recentLogins: recentLoginsResult.count || 0,
+    };
+  }
+
+  async getRecentActivity(limit: number = 50): Promise<AuditLog[]> {
+    return await db.select().from(auditLog)
+      .orderBy(desc(auditLog.timestamp))
+      .limit(limit);
+  }
+
+  async getUserStats(userId: string): Promise<{
+    loginCount: number;
+    lastLogin?: Date;
+    sessionDuration?: number;
+    actionsCount: number;
+  }> {
+    const [loginCountResult] = await db.select({ count: sql<number>`count(*)` })
+      .from(auditLog)
+      .where(and(
+        eq(auditLog.userId, userId),
+        eq(auditLog.action, 'user_login')
+      ));
+
+    const [lastLoginResult] = await db.select({ timestamp: auditLog.timestamp })
+      .from(auditLog)
+      .where(and(
+        eq(auditLog.userId, userId),
+        eq(auditLog.action, 'user_login')
+      ))
+      .orderBy(desc(auditLog.timestamp))
+      .limit(1);
+
+    const [actionsCountResult] = await db.select({ count: sql<number>`count(*)` })
+      .from(auditLog)
+      .where(eq(auditLog.userId, userId));
+
+    return {
+      loginCount: loginCountResult.count || 0,
+      lastLogin: lastLoginResult?.timestamp || undefined,
+      sessionDuration: undefined, // Could be calculated if we track session end times
+      actionsCount: actionsCountResult.count || 0,
+    };
+  }
+
+  async getPermissionMatrix(): Promise<Array<{
+    roleId: string;
+    roleName: string;
+    permissions: Permission[];
+  }>> {
+    const allRoles = await this.getRoles();
+    
+    const matrix = await Promise.all(
+      allRoles.map(async (role) => {
+        const permissions = await this.getRolePermissions(role.id);
+        return {
+          roleId: role.id,
+          roleName: role.name,
+          permissions,
+        };
+      })
+    );
+    
+    return matrix;
+  }
+
+  async searchUsers(query: string, limit: number = 50): Promise<User[]> {
+    const lowerQuery = `%${query.toLowerCase()}%`;
+    
+    return await db.select().from(users)
+      .where(sql`
+        lower(${users.username}) like ${lowerQuery} OR 
+        lower(${users.email}) like ${lowerQuery} OR
+        lower(${users.firstName}) like ${lowerQuery} OR
+        lower(${users.lastName}) like ${lowerQuery}
+      `)
+      .limit(limit);
+  }
+
+  async getUsersByRole(roleId: string): Promise<User[]> {
+    return await db.select({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      password: users.password,
+      role: users.role,
+      authProvider: users.authProvider,
+      oauthId: users.oauthId,
+      profileImage: users.profileImage,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .innerJoin(userRoles, eq(users.id, userRoles.userId))
+    .where(and(
+      eq(userRoles.roleId, roleId),
+      eq(userRoles.isActive, true)
+    ));
   }
 }
 

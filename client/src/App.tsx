@@ -12,6 +12,7 @@ import Settings from "@/pages/settings";
 import AIAssistant from "@/pages/ai-assistant";
 import NotFound from "@/pages/not-found";
 import RoleManagement from "@/pages/role-management";
+import AdminDashboard from "@/pages/admin-dashboard";
 
 function Router() {
   return (
@@ -25,6 +26,8 @@ function Router() {
       <Route path="/assistant" component={AIAssistant} />
       <Route path="/settings" component={Settings} />
       <Route path="/admin/roles" component={RoleManagement} />
+      <Route path="/admin" component={AdminDashboard} />
+      <Route path="/admin/dashboard" component={AdminDashboard} />
       <Route component={NotFound} />
     </Switch>
   );
