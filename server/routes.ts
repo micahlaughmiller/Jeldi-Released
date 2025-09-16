@@ -1783,20 +1783,29 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
       
       if (provider === 'outlook') {
-        // For Outlook, check if Replit connector is already set up
-        const outlookStatus = await emailService.checkOutlookConnection();
-        if (outlookStatus.isConnected) {
-          res.json({ 
-            message: "Outlook is already connected via Replit connector",
-            isConnected: true,
-            email: outlookStatus.email
-          });
-        } else {
-          res.status(400).json({ 
-            message: "Outlook connector not configured. Please set up the Outlook integration in your Replit project.",
-            requiresSetup: true
-          });
+        // First try to check if Replit connector is available
+        try {
+          const outlookStatus = await emailService.checkOutlookConnection();
+          if (outlookStatus.isConnected) {
+            return res.json({ 
+              message: "Outlook is already connected via Replit connector",
+              isConnected: true,
+              email: outlookStatus.email
+            });
+          }
+        } catch (error) {
+          // Replit connector not available, fall through to OAuth
+          console.log('Replit Outlook connector not available, using direct OAuth');
         }
+        
+        // Use direct OAuth for retail Outlook.com accounts
+        const redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/email/callback`;
+        const authUrl = await emailService.initiateEmailOAuth(provider, req.user.id, redirectUri);
+        
+        // Audit log the OAuth attempt
+        console.log(`Outlook OAuth initiated for user ${req.user.id} at ${new Date().toISOString()}`);
+        
+        res.json({ authUrl });
       } else if (provider === 'gmail') {
         const redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/email/callback`;
         const authUrl = await emailService.initiateEmailOAuth(provider, req.user.id, redirectUri);

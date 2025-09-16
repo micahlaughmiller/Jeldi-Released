@@ -33,10 +33,10 @@ export const EMAIL_PROVIDERS: Record<string, EmailProvider> = {
     name: "outlook",
     displayName: "Outlook.com",
     oauthConfig: {
-      authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-      tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      authUrl: "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
+      tokenUrl: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
       clientId: process.env.MICROSOFT_CLIENT_ID || "",
-      scopes: ["https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read"]
+      scopes: ["https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read", "offline_access"]
     },
     sendEndpoint: "https://graph.microsoft.com/v1.0/me/sendMail"
   }
@@ -283,7 +283,7 @@ export class EmailService {
     ].filter(Boolean);
     
     if (!allowedRedirectUris.includes(redirectUri)) {
-      throw new Error('Invalid redirect URI');
+      throw new Error(`Invalid redirect URI: ${redirectUri}. Allowed URIs: ${allowedRedirectUris.join(', ')}. Please configure this URI in your OAuth provider settings.`);
     }
 
     // Create or update email configuration

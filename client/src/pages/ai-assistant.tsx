@@ -372,7 +372,7 @@ export default function AIAssistant() {
                 <h2 className="text-lg font-semibold">AI Assistant</h2>
                 <Dialog open={showNewConversationDialog} onOpenChange={setShowNewConversationDialog}>
                   <DialogTrigger asChild>
-                    <Button size="sm" data-testid="button-new-conversation">
+                    <Button size="sm" className="whitespace-nowrap" data-testid="button-new-conversation">
                       <i className="fas fa-plus mr-2"></i>
                       New Chat
                     </Button>
@@ -411,7 +411,7 @@ export default function AIAssistant() {
                           description: newConversationDescription
                         })}
                         disabled={!newConversationTitle.trim() || createConversationMutation.isPending}
-                        className="w-full"
+                        className="w-full whitespace-nowrap"
                         data-testid="button-create-conversation"
                       >
                         {createConversationMutation.isPending ? "Creating..." : "Start Conversation"}
@@ -430,13 +430,13 @@ export default function AIAssistant() {
                       key={template.id}
                       variant="outline"
                       size="sm"
-                      className="justify-start h-auto p-2 text-left"
+                      className="justify-start h-auto p-2 text-left min-h-[3rem] flex-col"
                       onClick={() => handleTemplateClick(template)}
                       data-testid={`template-${template.id}`}
                     >
-                      <div>
-                        <i className={`${template.icon} text-xs mr-1`}></i>
-                        <div className="text-xs font-medium truncate">{template.name}</div>
+                      <div className="flex items-center w-full">
+                        <i className={`${template.icon} text-xs mr-1 flex-shrink-0`}></i>
+                        <div className="text-xs font-medium text-left break-words leading-tight">{template.name}</div>
                       </div>
                     </Button>
                   ))}
@@ -511,7 +511,7 @@ export default function AIAssistant() {
                       <Badge variant="secondary">
                         {messages.length} messages
                       </Badge>
-                      <Button variant="outline" size="sm">
+                      <Button variant="outline" size="sm" className="whitespace-nowrap">
                         <i className="fas fa-download mr-2"></i>
                         Export
                       </Button>
@@ -629,7 +629,7 @@ export default function AIAssistant() {
                                       key={i}
                                       variant="outline"
                                       size="sm"
-                                      className="text-xs h-7"
+                                      className="text-xs h-auto py-1 px-2 whitespace-normal text-left"
                                       onClick={() => setQuery(question)}
                                       data-testid={`followup-${i}`}
                                     >
@@ -692,11 +692,11 @@ export default function AIAssistant() {
                       <span>Real-time ERP data access</span>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <Button variant="ghost" size="sm" className="h-6 px-2">
+                      <Button variant="ghost" size="sm" className="h-6 px-2 whitespace-nowrap">
                         <i className="fas fa-microphone text-xs mr-1"></i>
                         Voice
                       </Button>
-                      <Button variant="ghost" size="sm" className="h-6 px-2">
+                      <Button variant="ghost" size="sm" className="h-6 px-2 whitespace-nowrap">
                         <i className="fas fa-paperclip text-xs mr-1"></i>
                         Attach
                       </Button>
@@ -749,6 +749,7 @@ export default function AIAssistant() {
                   
                   <Button
                     size="lg"
+                    className="whitespace-nowrap"
                     onClick={() => setShowNewConversationDialog(true)}
                     data-testid="button-start-conversation"
                   >

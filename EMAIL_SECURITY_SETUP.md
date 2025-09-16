@@ -37,10 +37,12 @@ FRONTEND_URL=https://yourdomain.com
 2. Create a new project or select existing project
 3. Enable Gmail API
 4. Create OAuth 2.0 credentials
-5. Add authorized redirect URIs:
-   - `https://yourdomain.com/api/email/callback`
-   - `http://localhost:5000/api/email/callback` (for development)
-6. Set scopes: `gmail.send`, `gmail.readonly`
+5. Add authorized redirect URIs (BOTH are required):
+   - `https://yourdomain.com/api/auth/google/callback` (for user authentication)
+   - `https://yourdomain.com/api/email/callback` (for Gmail email integration)
+   - `http://localhost:5000/api/auth/google/callback` (for development authentication)
+   - `http://localhost:5000/api/email/callback` (for development email integration)
+6. Set scopes: `gmail.send`, `gmail.readonly`, `profile`, `email`
 
 ### Outlook/Microsoft OAuth Setup
 1. Go to [Azure App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
