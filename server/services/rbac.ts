@@ -248,6 +248,19 @@ export class RBACService {
         { name: "settings.view", displayName: "View Settings", description: "View system settings", category: "settings", resource: "settings", action: "read", isSystem: true },
         { name: "settings.update", displayName: "Update Settings", description: "Modify system settings", category: "settings", resource: "settings", action: "update", isSystem: true },
         { name: "settings.admin", displayName: "Admin Settings", description: "Administrative settings access", category: "settings", resource: "settings", action: "admin", isSystem: true },
+
+        // Analytics
+        { name: "analytics.view", displayName: "View Analytics", description: "Access analytics dashboards and reports", category: "analytics", resource: "analytics", action: "read", isSystem: true },
+        { name: "analytics.create", displayName: "Create Analytics", description: "Create custom analytics dashboards", category: "analytics", resource: "analytics", action: "create", isSystem: true },
+        { name: "analytics.export", displayName: "Export Analytics", description: "Export analytics data and reports", category: "analytics", resource: "analytics", action: "export", isSystem: true },
+        { name: "analytics.advanced", displayName: "Advanced Analytics", description: "Access advanced analytics features and insights", category: "analytics", resource: "analytics", action: "advanced", isSystem: true },
+        
+        // Organizations
+        { name: "organizations.read", displayName: "View Organizations", description: "Access organization information and listings", category: "organizations", resource: "organizations", action: "read", isSystem: true },
+        { name: "organizations.create", displayName: "Create Organizations", description: "Create new organizations", category: "organizations", resource: "organizations", action: "create", isSystem: true },
+        { name: "organizations.update", displayName: "Update Organizations", description: "Modify organization details", category: "organizations", resource: "organizations", action: "update", isSystem: true },
+        { name: "organizations.delete", displayName: "Delete Organizations", description: "Remove organizations from the system", category: "organizations", resource: "organizations", action: "delete", isSystem: true },
+        { name: "organizations.manage", displayName: "Manage Organizations", description: "Full organization management access", category: "organizations", resource: "organizations", action: "manage", isSystem: true },
       ];
 
       // Create roles and permissions
@@ -262,45 +275,55 @@ export class RBACService {
       // Define role-permission mappings
       const rolePermissionMappings = {
         admin: [
-          "user.create", "user.read", "user.update", "user.delete", "user.manage_roles",
-          "financial.view", "financial.create", "financial.update", "financial.export",
-          "erp.view", "erp.connect", "erp.manage", "erp.sync",
-          "kpi.view", "kpi.create", "kpi.update", "kpi.delete",
+          "users.create", "users.read", "users.update", "users.delete", "users.manage_roles",
+          "financial.read", "financial.create", "financial.update", "financial.export",
+          "erp_connections.read", "erp_connections.create", "erp_connections.manage", "erp_connections.sync",
+          "kpis.read", "kpis.create", "kpis.update", "kpis.delete",
           "ai.basic", "ai.advanced", "ai.admin",
           "email.send", "email.manage",
-          "settings.view", "settings.update", "settings.admin"
+          "settings.read", "settings.update", "settings.admin",
+          "analytics.read", "analytics.create", "analytics.export", "analytics.advanced",
+          "organizations.read", "organizations.create", "organizations.update", "organizations.delete", "organizations.manage"
         ],
         ops_manager: [
-          "erp.view", "erp.connect", "erp.manage", "erp.sync",
-          "kpi.view", "kpi.create", "kpi.update",
+          "erp_connections.read", "erp_connections.create", "erp_connections.manage", "erp_connections.sync",
+          "kpis.read", "kpis.create", "kpis.update",
           "ai.basic", "ai.advanced",
-          "email.send", "settings.view"
+          "email.send", "settings.read",
+          "analytics.read", "analytics.create", "analytics.advanced"
         ],
         finance: [
-          "financial.view", "financial.create", "financial.update", "financial.export",
-          "kpi.view", "ai.basic", "email.send", "settings.view"
+          "financial.read", "financial.create", "financial.update", "financial.export",
+          "kpis.read", "ai.basic", "email.send", "settings.read",
+          "analytics.read", "analytics.export"
         ],
         cfo: [
-          "financial.view", "financial.export",
-          "kpi.view", "ai.basic", "ai.advanced",
-          "email.send", "settings.view"
+          "financial.read", "financial.export",
+          "kpis.read", "ai.basic", "ai.advanced",
+          "email.send", "settings.read",
+          "analytics.read", "analytics.export", "analytics.advanced"
         ],
         project_manager: [
-          "kpi.view", "kpi.create", "kpi.update",
-          "ai.basic", "email.send", "settings.view"
+          "kpis.read", "kpis.create", "kpis.update",
+          "ai.basic", "email.send", "settings.read",
+          "analytics.read", "analytics.create"
         ],
         cost_manager: [
-          "financial.view", "financial.export",
-          "kpi.view", "ai.basic", "email.send", "settings.view"
+          "financial.read", "financial.export",
+          "kpis.read", "ai.basic", "email.send", "settings.read",
+          "analytics.read", "analytics.export"
         ],
         sales: [
-          "kpi.view", "ai.basic", "email.send", "settings.view"
+          "kpis.read", "ai.basic", "email.send", "settings.read",
+          "analytics.read"
         ],
         marketing: [
-          "kpi.view", "ai.basic", "email.send", "settings.view"
+          "kpis.read", "ai.basic", "email.send", "settings.read",
+          "analytics.read"
         ],
         user: [
-          "kpi.view", "ai.basic", "email.send", "email.manage", "settings.view"
+          "kpis.read", "ai.basic", "email.send", "email.manage", "settings.read",
+          "analytics.read"
         ]
       };
 

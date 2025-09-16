@@ -10,6 +10,7 @@ import EmailCenter from "@/pages/email-center";
 import DemoPage from "@/pages/demo";
 import Settings from "@/pages/settings";
 import AIAssistant from "@/pages/ai-assistant";
+import Analytics from "@/pages/analytics";
 import NotFound from "@/pages/not-found";
 import RoleManagement from "@/pages/role-management";
 import AdminDashboard from "@/pages/admin-dashboard";
@@ -21,6 +22,7 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/demo" component={DemoPage} />
       <Route path="/dashboard" component={Dashboard} />
+      <Route path="/analytics" component={Analytics} />
       <Route path="/email" component={EmailCenter} />
       <Route path="/ai-assistant" component={AIAssistant} />
       <Route path="/assistant" component={AIAssistant} />

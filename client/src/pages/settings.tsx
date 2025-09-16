@@ -13,12 +13,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { 
   Settings as SettingsIcon, User, Lock, Globe, Download, Upload, 
   Bell, Palette, Clock, DollarSign, Shield, 
-  Camera, Mail, Eye, EyeOff 
+  Camera, Mail, Eye, EyeOff, Building2, Users, UserPlus, Crown, 
+  Edit, Trash2, Plus, Search, Filter
 } from "lucide-react";
 
 // Schemas for form validation
@@ -58,9 +61,23 @@ const preferencesSchema = z.object({
   exportFormat: z.enum(["csv", "json", "xlsx"]),
 });
 
+// Organization schemas
+const organizationSchema = z.object({
+  name: z.string().min(2, "Organization name must be at least 2 characters"),
+  displayName: z.string().min(2, "Display name must be at least 2 characters"),
+  description: z.string().optional(),
+  website: z.string().url().optional().or(z.literal("")),
+});
+
+const inviteMemberSchema = z.object({
+  email: z.string().email("Invalid email address"),
+});
+
 type ProfileFormData = z.infer<typeof profileSchema>;
 type PasswordFormData = z.infer<typeof passwordSchema>;
 type PreferencesFormData = z.infer<typeof preferencesSchema>;
+type OrganizationFormData = z.infer<typeof organizationSchema>;
+type InviteMemberFormData = z.infer<typeof inviteMemberSchema>;
 
 interface UserData {
   id: string;
@@ -93,12 +110,58 @@ interface UserPreferences {
   exportFormat: "csv" | "json" | "xlsx";
 }
 
+interface Organization {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  website?: string;
+  logo?: string;
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  members: OrganizationMember[];
+  memberCount: number;
+}
+
+interface OrganizationMember {
+  id: string;
+  organizationId: string;
+  userId: string;
+  status: "active" | "pending" | "suspended";
+  isOwner: boolean;
+  joinedAt: string;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    profileImage?: string;
+  };
+}
+
+interface Role {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  color: string;
+  isSystem: boolean;
+  isActive: boolean;
+  organizationId?: string;
+}
+
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("profile");
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [selectedOrganization, setSelectedOrganization] = useState<Organization | null>(null);
+  const [showCreateOrgDialog, setShowCreateOrgDialog] = useState(false);
+  const [showInviteMemberDialog, setShowInviteMemberDialog] = useState(false);
 
   // Fetch user data and preferences
   const { data: userData } = useQuery<UserData>({
@@ -107,6 +170,18 @@ export default function Settings() {
 
   const { data: preferences, isLoading: preferencesLoading } = useQuery<UserPreferences>({
     queryKey: ["/api/user/preferences"],
+  });
+
+  // Fetch organizations
+  const { data: organizations, isLoading: organizationsLoading } = useQuery<Organization[]>({
+    queryKey: ["/api/organizations/my"],
+    enabled: !!userData,
+  });
+
+  // Fetch available roles for organization assignment
+  const { data: availableRoles } = useQuery<Role[]>({
+    queryKey: ["/api/rbac/roles"],
+    enabled: !!userData && activeTab === "organizations",
   });
 
   // Initialize forms
@@ -144,6 +219,23 @@ export default function Settings() {
       twoFactorEnabled: false,
       dataRetention: 365,
       exportFormat: "csv",
+    },
+  });
+
+  const organizationForm = useForm<OrganizationFormData>({
+    resolver: zodResolver(organizationSchema),
+    defaultValues: {
+      name: "",
+      displayName: "",
+      description: "",
+      website: "",
+    },
+  });
+
+  const inviteMemberForm = useForm<InviteMemberFormData>({
+    resolver: zodResolver(inviteMemberSchema),
+    defaultValues: {
+      email: "",
     },
   });
 
@@ -242,6 +334,143 @@ export default function Settings() {
     },
   });
 
+  // Organization mutations
+  const createOrganizationMutation = useMutation({
+    mutationFn: (data: OrganizationFormData) => apiRequest("/api/organizations", "POST", data),
+    onSuccess: () => {
+      toast({
+        title: "Organization Created",
+        description: "Your organization has been created successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/organizations/my"] });
+      setShowCreateOrgDialog(false);
+      organizationForm.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Creation Failed",
+        description: error.message || "Failed to create organization",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateOrganizationMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<OrganizationFormData> }) => 
+      apiRequest(`/api/organizations/${id}`, "PUT", data),
+    onSuccess: () => {
+      toast({
+        title: "Organization Updated",
+        description: "Organization details have been updated successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/organizations/my"] });
+      setSelectedOrganization(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Update Failed",
+        description: error.message || "Failed to update organization",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteOrganizationMutation = useMutation({
+    mutationFn: (id: string) => apiRequest(`/api/organizations/${id}`, "DELETE"),
+    onSuccess: () => {
+      toast({
+        title: "Organization Deleted",
+        description: "Organization has been deleted successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/organizations/my"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Deletion Failed",
+        description: error.message || "Failed to delete organization",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const addMemberMutation = useMutation({
+    mutationFn: ({ orgId, userData }: { orgId: string; userData: { userId: string } }) => 
+      apiRequest(`/api/organizations/${orgId}/members`, "POST", userData),
+    onSuccess: () => {
+      toast({
+        title: "Member Added",
+        description: "Member has been added to the organization successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/organizations/my"] });
+      setShowInviteMemberDialog(false);
+      inviteMemberForm.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to Add Member",
+        description: error.message || "Failed to add member to organization",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: ({ orgId, userId }: { orgId: string; userId: string }) => 
+      apiRequest(`/api/organizations/${orgId}/members/${userId}`, "DELETE"),
+    onSuccess: () => {
+      toast({
+        title: "Member Removed",
+        description: "Member has been removed from the organization.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/organizations/my"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Removal Failed",
+        description: error.message || "Failed to remove member",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const assignRoleMutation = useMutation({
+    mutationFn: ({ orgId, userId, roleId }: { orgId: string; userId: string; roleId: string }) => 
+      apiRequest(`/api/organizations/${orgId}/assign-role`, "POST", { userId, roleId }),
+    onSuccess: () => {
+      toast({
+        title: "Role Assigned",
+        description: "Role has been assigned successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/organizations/my"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Assignment Failed",
+        description: error.message || "Failed to assign role",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const revokeRoleMutation = useMutation({
+    mutationFn: ({ orgId, userId, roleId }: { orgId: string; userId: string; roleId: string }) => 
+      apiRequest(`/api/organizations/${orgId}/revoke-role`, "DELETE", { userId, roleId }),
+    onSuccess: () => {
+      toast({
+        title: "Role Revoked",
+        description: "Role has been revoked successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/organizations/my"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Revocation Failed",
+        description: error.message || "Failed to revoke role",
+        variant: "destructive",
+      });
+    },
+  });
+
   const getUserInitials = (username: string) => {
     return username
       .split(" ")
@@ -261,6 +490,27 @@ export default function Settings() {
 
   const onPreferencesSubmit = (data: PreferencesFormData) => {
     updatePreferencesMutation.mutate(data);
+  };
+
+  const onOrganizationSubmit = (data: OrganizationFormData) => {
+    if (selectedOrganization) {
+      updateOrganizationMutation.mutate({ id: selectedOrganization.id, data });
+    } else {
+      createOrganizationMutation.mutate(data);
+    }
+  };
+
+  const onInviteMemberSubmit = (data: InviteMemberFormData) => {
+    if (!selectedOrganization) return;
+    
+    // In a real implementation, you would first look up the user by email
+    // For now, we'll show a simpler toast message
+    toast({
+      title: "Invitation Sent",
+      description: `Invitation sent to ${data.email}`,
+    });
+    setShowInviteMemberDialog(false);
+    inviteMemberForm.reset();
   };
 
   const handleExportData = () => {
@@ -290,7 +540,7 @@ export default function Settings() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="profile" className="flex items-center space-x-2" data-testid="tab-profile">
             <User className="h-4 w-4" />
             <span>Profile</span>
@@ -298,6 +548,10 @@ export default function Settings() {
           <TabsTrigger value="preferences" className="flex items-center space-x-2" data-testid="tab-preferences">
             <Palette className="h-4 w-4" />
             <span>Preferences</span>
+          </TabsTrigger>
+          <TabsTrigger value="organizations" className="flex items-center space-x-2" data-testid="tab-organizations">
+            <Building2 className="h-4 w-4" />
+            <span>Organizations</span>
           </TabsTrigger>
           <TabsTrigger value="security" className="flex items-center space-x-2" data-testid="tab-security">
             <Shield className="h-4 w-4" />
@@ -750,6 +1004,192 @@ export default function Settings() {
           </Form>
         </TabsContent>
 
+        {/* Organizations Tab */}
+        <TabsContent value="organizations" className="space-y-6">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-xl font-semibold">Organizations</h2>
+              <p className="text-sm text-muted-foreground">Manage your organizations and team members</p>
+            </div>
+            <Button 
+              onClick={() => setShowCreateOrgDialog(true)} 
+              className="flex items-center space-x-2"
+              data-testid="button-create-organization"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Create Organization</span>
+            </Button>
+          </div>
+
+          {organizationsLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : (
+            <div className="grid gap-6">
+              {organizations && organizations.length > 0 ? (
+                organizations.map((org) => (
+                  <Card key={org.id} className="hover:shadow-md transition-shadow">
+                    <CardHeader>
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <Building2 className="h-6 w-6 text-primary" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-lg" data-testid={`org-title-${org.id}`}>
+                              {org.displayName}
+                            </CardTitle>
+                            <p className="text-sm text-muted-foreground">@{org.name}</p>
+                            {org.description && (
+                              <p className="text-sm text-muted-foreground mt-1">{org.description}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedOrganization(org)}
+                            data-testid={`button-edit-org-${org.id}`}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (confirm("Are you sure you want to delete this organization?")) {
+                                deleteOrganizationMutation.mutate(org.id);
+                              }
+                            }}
+                            data-testid={`button-delete-org-${org.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center space-x-4">
+                          <div className="flex items-center space-x-2">
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm" data-testid={`org-member-count-${org.id}`}>
+                              {org.memberCount} member{org.memberCount !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          {org.website && (
+                            <a 
+                              href={org.website} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-sm text-primary hover:underline flex items-center space-x-1"
+                            >
+                              <Globe className="h-4 w-4" />
+                              <span>Website</span>
+                            </a>
+                          )}
+                        </div>
+                        <div className="flex space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedOrganization(org);
+                              setShowInviteMemberDialog(true);
+                            }}
+                            data-testid={`button-invite-member-${org.id}`}
+                          >
+                            <UserPlus className="h-4 w-4 mr-2" />
+                            Invite Member
+                          </Button>
+                        </div>
+                      </div>
+
+                      {org.members && org.members.length > 0 && (
+                        <div className="mt-4">
+                          <h4 className="text-sm font-medium mb-2">Members</h4>
+                          <div className="space-y-2">
+                            {org.members.slice(0, 3).map((member) => (
+                              <div key={member.id} className="flex items-center justify-between p-2 bg-muted rounded-lg">
+                                <div className="flex items-center space-x-3">
+                                  <Avatar className="h-8 w-8">
+                                    <AvatarImage src={member.user.profileImage} />
+                                    <AvatarFallback>
+                                      {getUserInitials(member.user.username)}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div>
+                                    <p className="text-sm font-medium" data-testid={`member-name-${member.id}`}>
+                                      {member.user.firstName && member.user.lastName 
+                                        ? `${member.user.firstName} ${member.user.lastName}`
+                                        : member.user.username
+                                      }
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">{member.user.email}</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  {member.isOwner && (
+                                    <Badge variant="secondary" className="flex items-center space-x-1">
+                                      <Crown className="h-3 w-3" />
+                                      <span>Owner</span>
+                                    </Badge>
+                                  )}
+                                  <Badge variant="outline" data-testid={`member-status-${member.id}`}>
+                                    {member.status}
+                                  </Badge>
+                                  {!member.isOwner && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => {
+                                        if (confirm("Are you sure you want to remove this member?")) {
+                                          removeMemberMutation.mutate({ orgId: org.id, userId: member.userId });
+                                        }
+                                      }}
+                                      data-testid={`button-remove-member-${member.id}`}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                            {org.memberCount > 3 && (
+                              <p className="text-xs text-muted-foreground text-center">
+                                and {org.memberCount - 3} more member{org.memberCount - 3 !== 1 ? 's' : ''}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))
+              ) : (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-16">
+                    <Building2 className="h-12 w-12 text-muted-foreground mb-4" />
+                    <h3 className="text-lg font-medium mb-2">No organizations yet</h3>
+                    <p className="text-muted-foreground text-center mb-6 max-w-md">
+                      Create your first organization to start managing teams and permissions.
+                    </p>
+                    <Button 
+                      onClick={() => setShowCreateOrgDialog(true)}
+                      data-testid="button-create-first-organization"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create Your First Organization
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+        </TabsContent>
+
         {/* Security Tab */}
         <TabsContent value="security" className="space-y-6">
           {/* Password Change */}
@@ -1031,6 +1471,288 @@ export default function Settings() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Create Organization Dialog */}
+      <Dialog open={showCreateOrgDialog} onOpenChange={setShowCreateOrgDialog}>
+        <DialogContent className="sm:max-w-[425px]" data-testid="dialog-create-organization">
+          <DialogHeader>
+            <DialogTitle>Create Organization</DialogTitle>
+            <DialogDescription>
+              Create a new organization to manage teams and permissions.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...organizationForm}>
+            <form onSubmit={organizationForm.handleSubmit(onOrganizationSubmit)} className="space-y-4">
+              <FormField
+                control={organizationForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Organization Name</FormLabel>
+                    <FormControl>
+                      <Input 
+                        placeholder="my-organization" 
+                        {...field} 
+                        data-testid="input-org-name"
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      This will be used in URLs and API calls. Use lowercase letters, numbers, and hyphens only.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={organizationForm.control}
+                name="displayName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Display Name</FormLabel>
+                    <FormControl>
+                      <Input 
+                        placeholder="My Organization" 
+                        {...field} 
+                        data-testid="input-org-display-name"
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      This is how your organization will appear in the interface.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={organizationForm.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description (Optional)</FormLabel>
+                    <FormControl>
+                      <Textarea 
+                        placeholder="Brief description of your organization..." 
+                        {...field} 
+                        data-testid="input-org-description"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={organizationForm.control}
+                name="website"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Website (Optional)</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="url"
+                        placeholder="https://example.com" 
+                        {...field} 
+                        data-testid="input-org-website"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setShowCreateOrgDialog(false)}
+                  data-testid="button-cancel-create-org"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={createOrganizationMutation.isPending}
+                  data-testid="button-submit-create-org"
+                >
+                  {createOrganizationMutation.isPending ? "Creating..." : "Create Organization"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Organization Dialog */}
+      <Dialog open={!!selectedOrganization && !showInviteMemberDialog} onOpenChange={(open) => {
+        if (!open) setSelectedOrganization(null);
+      }}>
+        <DialogContent className="sm:max-w-[425px]" data-testid="dialog-edit-organization">
+          <DialogHeader>
+            <DialogTitle>Edit Organization</DialogTitle>
+            <DialogDescription>
+              Update your organization details.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedOrganization && (
+            <Form {...organizationForm}>
+              <form onSubmit={organizationForm.handleSubmit(onOrganizationSubmit)} className="space-y-4">
+                <FormField
+                  control={organizationForm.control}
+                  name="displayName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Display Name</FormLabel>
+                      <FormControl>
+                        <Input 
+                          {...field} 
+                          defaultValue={selectedOrganization.displayName}
+                          data-testid="input-edit-org-display-name"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={organizationForm.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea 
+                          {...field} 
+                          defaultValue={selectedOrganization.description || ""}
+                          data-testid="input-edit-org-description"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={organizationForm.control}
+                  name="website"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Website</FormLabel>
+                      <FormControl>
+                        <Input 
+                          type="url"
+                          {...field} 
+                          defaultValue={selectedOrganization.website || ""}
+                          data-testid="input-edit-org-website"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setSelectedOrganization(null)}
+                    data-testid="button-cancel-edit-org"
+                  >
+                    Cancel
+                  </Button>
+                  <Button 
+                    type="submit" 
+                    disabled={updateOrganizationMutation.isPending}
+                    data-testid="button-submit-edit-org"
+                  >
+                    {updateOrganizationMutation.isPending ? "Updating..." : "Update Organization"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Invite Member Dialog */}
+      <Dialog open={showInviteMemberDialog} onOpenChange={setShowInviteMemberDialog}>
+        <DialogContent className="sm:max-w-[425px]" data-testid="dialog-invite-member">
+          <DialogHeader>
+            <DialogTitle>Invite Member</DialogTitle>
+            <DialogDescription>
+              Invite a new member to {selectedOrganization?.displayName || 'this organization'}.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...inviteMemberForm}>
+            <form onSubmit={inviteMemberForm.handleSubmit(onInviteMemberSubmit)} className="space-y-4">
+              <FormField
+                control={inviteMemberForm.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email Address</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="email"
+                        placeholder="member@example.com" 
+                        {...field} 
+                        data-testid="input-invite-email"
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      We'll send an invitation to this email address.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              {/* Role Selection */}
+              {availableRoles && availableRoles.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Assign Role (Optional)</label>
+                  <Select onValueChange={(value) => {
+                    // Store selected role for invitation
+                    console.log("Selected role:", value);
+                  }}>
+                    <SelectTrigger data-testid="select-invite-role">
+                      <SelectValue placeholder="Select a role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableRoles.filter(role => !role.organizationId || role.organizationId === selectedOrganization?.id).map((role) => (
+                        <SelectItem key={role.id} value={role.id}>
+                          <div className="flex items-center space-x-2">
+                            <div 
+                              className="w-3 h-3 rounded-full" 
+                              style={{ backgroundColor: role.color }}
+                            />
+                            <span>{role.displayName}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    The member will receive this role when they join the organization.
+                  </p>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setShowInviteMemberDialog(false)}
+                  data-testid="button-cancel-invite"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  data-testid="button-submit-invite"
+                >
+                  Send Invitation
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

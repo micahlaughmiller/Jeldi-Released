@@ -123,6 +123,7 @@ const businessTemplates: BusinessTemplate[] = [
 export default function AIAssistant() {
   const [location, navigate] = useLocation();
   const [user, setUser] = useState<User | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -132,31 +133,96 @@ export default function AIAssistant() {
   const { toast } = useToast();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Query for user data
-  const { data: userData } = useQuery({
+  // Check authentication on mount
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userData = localStorage.getItem("user");
+    
+    if (!token || !userData) {
+      navigate("/login");
+      return;
+    }
+
+    try {
+      const parsedUser = JSON.parse(userData);
+      setUser(parsedUser);
+      setIsAuthenticated(true);
+    } catch (error) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      navigate("/login");
+    }
+  }, [navigate]);
+
+  // Query for user data with proper error handling
+  const { data: userData, error: userError } = useQuery({
     queryKey: ['/api/auth/me'],
     staleTime: 5 * 60 * 1000,
+    enabled: isAuthenticated,
+    retry: false,
+    onError: (error: any) => {
+      if (error?.message?.includes('401') || error?.message?.includes('403')) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        navigate("/login");
+      }
+    }
   });
 
-  // Query for conversations
+  // Query for conversations with authentication check
   const { data: conversations = [], refetch: refetchConversations } = useQuery<Conversation[]>({
     queryKey: ['/api/conversations'],
+    enabled: isAuthenticated,
+    retry: false,
+    onError: (error: any) => {
+      if (error?.message?.includes('401') || error?.message?.includes('403')) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        navigate("/login");
+      }
+    }
   });
 
-  // Query for conversation details
+  // Query for conversation details with authentication check
   const { data: conversationData } = useQuery({
     queryKey: ['/api/conversations', currentConversation?.id],
-    enabled: !!currentConversation?.id,
+    enabled: !!currentConversation?.id && isAuthenticated,
+    retry: false,
+    onError: (error: any) => {
+      if (error?.message?.includes('401') || error?.message?.includes('403')) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        navigate("/login");
+      }
+    }
   });
 
-  // Query for query templates
+  // Query for query templates with authentication check
   const { data: templatesData } = useQuery({
     queryKey: ['/api/query-templates'],
+    enabled: isAuthenticated,
+    retry: false,
+    onError: (error: any) => {
+      if (error?.message?.includes('401') || error?.message?.includes('403')) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        navigate("/login");
+      }
+    }
   });
 
-  // Query for favorite queries
+  // Query for favorite queries with authentication check
   const { data: favorites = [] } = useQuery<FavoriteQuery[]>({
     queryKey: ['/api/favorite-queries'],
+    enabled: isAuthenticated,
+    retry: false,
+    onError: (error: any) => {
+      if (error?.message?.includes('401') || error?.message?.includes('403')) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        navigate("/login");
+      }
+    }
   });
 
   // Create conversation mutation
@@ -176,6 +242,19 @@ export default function AIAssistant() {
         description: "New conversation started successfully.",
       });
     },
+    onError: (error: any) => {
+      if (error?.message?.includes('401') || error?.message?.includes('403')) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        navigate("/login");
+      } else {
+        toast({
+          title: "Failed to Create Conversation",
+          description: error.message || "An error occurred",
+          variant: "destructive",
+        });
+      }
+    },
   });
 
   // Send message mutation
@@ -188,6 +267,19 @@ export default function AIAssistant() {
       queryClient.invalidateQueries({ queryKey: ['/api/conversations', currentConversation?.id] });
       refetchConversations();
       setQuery("");
+    },
+    onError: (error: any) => {
+      if (error?.message?.includes('401') || error?.message?.includes('403')) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        navigate("/login");
+      } else {
+        toast({
+          title: "Message Failed",
+          description: error.message || "Failed to send message",
+          variant: "destructive",
+        });
+      }
     },
   });
 
@@ -202,7 +294,7 @@ export default function AIAssistant() {
   }, [conversationData]);
 
   const handleSendMessage = async () => {
-    if (!query.trim() || !currentConversation || isLoading) return;
+    if (!query.trim() || !currentConversation || isLoading || !isAuthenticated) return;
 
     setIsLoading(true);
     try {
@@ -211,11 +303,7 @@ export default function AIAssistant() {
         query: query.trim()
       });
     } catch (error) {
-      toast({
-        title: "Message Failed",
-        description: (error as Error).message,
-        variant: "destructive",
-      });
+      // Error handling is now in the mutation's onError callback
     } finally {
       setIsLoading(false);
     }
@@ -254,7 +342,7 @@ export default function AIAssistant() {
     });
   };
 
-  if (!user) {
+  if (!user || !isAuthenticated) {
     return <div className="flex items-center justify-center h-screen">Loading...</div>;
   }
 

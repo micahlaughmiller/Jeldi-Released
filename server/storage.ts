@@ -1,6 +1,7 @@
 import { 
   users, erpConnections, kpiConfigurations, kpiData, emailConfigurations, chatHistory, oauthSessions, userPreferences,
   conversations, queryTemplates, favoriteQueries, roles, permissions, userRoles, rolePermissions, auditLog,
+  organizations, organizationMembers,
   type User, type InsertUser, type InsertOAuthUser, type ErpConnection, type InsertErpConnection,
   type KpiConfiguration, type InsertKpiConfiguration, type KpiData, type InsertKpiData,
   type EmailConfiguration, type InsertEmailConfiguration, type ChatHistory, type InsertChatHistory,
@@ -9,7 +10,10 @@ import {
   type FavoriteQuery, type InsertFavoriteQuery,
   type Role, type InsertRole, type UpdateRole, type Permission, type InsertPermission,
   type UserRole, type InsertUserRole, type UpdateUserRole, type RolePermission, type InsertRolePermission,
-  type AuditLog, type InsertAuditLog, type UserWithRoles, type RoleWithPermissions
+  type AuditLog, type InsertAuditLog, type UserWithRoles, type RoleWithPermissions,
+  type Organization, type InsertOrganization, type UpdateOrganization,
+  type OrganizationMember, type InsertOrganizationMember, type UpdateOrganizationMember,
+  type OrganizationWithMembers, type UserWithOrganizations, type OrganizationMemberWithUser
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -85,6 +89,29 @@ export interface IStorage {
   createUserPreferences(preferences: InsertUserPreferences): Promise<UserPreferences>;
   updateUserPreferences(userId: string, updates: UpdateUserPreferences): Promise<UserPreferences | undefined>;
   resetUserPreferences(userId: string): Promise<UserPreferences | undefined>;
+
+  // Organization operations
+  getOrganizations(): Promise<Organization[]>;
+  getOrganization(id: string): Promise<Organization | undefined>;
+  getOrganizationByName(name: string): Promise<Organization | undefined>;
+  getUserOrganizations(userId: string): Promise<OrganizationWithMembers[]>;
+  createOrganization(organization: InsertOrganization): Promise<Organization>;
+  updateOrganization(id: string, updates: UpdateOrganization): Promise<Organization | undefined>;
+  deleteOrganization(id: string): Promise<boolean>;
+
+  // Organization Member operations
+  getOrganizationMembers(organizationId: string): Promise<OrganizationMemberWithUser[]>;
+  getOrganizationMember(organizationId: string, userId: string): Promise<OrganizationMember | undefined>;
+  addOrganizationMember(member: InsertOrganizationMember): Promise<OrganizationMember>;
+  updateOrganizationMember(organizationId: string, userId: string, updates: UpdateOrganizationMember): Promise<OrganizationMember | undefined>;
+  removeOrganizationMember(organizationId: string, userId: string): Promise<boolean>;
+  getUserOrganizationMemberships(userId: string): Promise<(OrganizationMember & { organization: Organization })[]>;
+
+  // Organization Role operations
+  assignRoleToUserInOrganization(userId: string, roleId: string, organizationId: string, assignedBy?: string): Promise<UserRole>;
+  revokeRoleFromUserInOrganization(userId: string, roleId: string, organizationId: string): Promise<boolean>;
+  getUserRolesInOrganization(userId: string, organizationId: string): Promise<(UserRole & { role: Role })[]>;
+  getOrganizationRoles(organizationId: string): Promise<Role[]>;
 
   // RBAC operations
   // Role operations
@@ -319,31 +346,6 @@ export class DatabaseStorage implements IStorage {
     await db.delete(oauthSessions).where(sql`${oauthSessions.expiresAt} < NOW()`);
   }
 
-  async getUserPreferences(userId: string): Promise<UserPreferences | undefined> {
-    const [preferences] = await db.select().from(userPreferences)
-      .where(eq(userPreferences.userId, userId));
-    return preferences || undefined;
-  }
-
-  async createUserPreferences(preferences: InsertUserPreferences): Promise<UserPreferences> {
-    const [newPreferences] = await db.insert(userPreferences).values(preferences).returning();
-    return newPreferences;
-  }
-
-  async updateUserPreferences(userId: string, updates: UpdateUserPreferences): Promise<UserPreferences | undefined> {
-    const [updated] = await db.update(userPreferences)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(userPreferences.userId, userId))
-      .returning();
-    return updated || undefined;
-  }
-
-  async resetUserPreferences(userId: string): Promise<UserPreferences | undefined> {
-    // Delete existing preferences and create default ones
-    await db.delete(userPreferences).where(eq(userPreferences.userId, userId));
-    return await this.createUserPreferences({ userId });
-  }
-
   // Conversation operations
   async getConversations(userId: string, limit = 50): Promise<Conversation[]> {
     return await db.select().from(conversations)
@@ -495,6 +497,218 @@ export class DatabaseStorage implements IStorage {
       .where(eq(userPreferences.userId, userId))
       .returning();
     return resetPreferences || undefined;
+  }
+
+  // Organization operations
+  async getOrganizations(): Promise<Organization[]> {
+    return await db.select().from(organizations)
+      .where(eq(organizations.isActive, true))
+      .orderBy(desc(organizations.createdAt));
+  }
+
+  async getOrganization(id: string): Promise<Organization | undefined> {
+    const [organization] = await db.select().from(organizations)
+      .where(and(eq(organizations.id, id), eq(organizations.isActive, true)));
+    return organization || undefined;
+  }
+
+  async getOrganizationByName(name: string): Promise<Organization | undefined> {
+    const [organization] = await db.select().from(organizations)
+      .where(and(eq(organizations.name, name), eq(organizations.isActive, true)));
+    return organization || undefined;
+  }
+
+  async getUserOrganizations(userId: string): Promise<OrganizationWithMembers[]> {
+    const userOrgMemberships = await db.select({
+      organization: organizations,
+      member: organizationMembers,
+    })
+    .from(organizationMembers)
+    .innerJoin(organizations, eq(organizationMembers.organizationId, organizations.id))
+    .where(and(
+      eq(organizationMembers.userId, userId),
+      eq(organizationMembers.status, "active"),
+      eq(organizations.isActive, true)
+    ));
+
+    const orgsWithMembers: OrganizationWithMembers[] = [];
+    
+    for (const { organization } of userOrgMemberships) {
+      const members = await this.getOrganizationMembers(organization.id);
+      orgsWithMembers.push({
+        ...organization,
+        members,
+        memberCount: members.length,
+      });
+    }
+    
+    return orgsWithMembers;
+  }
+
+  async createOrganization(organization: InsertOrganization): Promise<Organization> {
+    const [newOrganization] = await db.insert(organizations).values(organization).returning();
+    
+    // Add the creator as an owner of the organization
+    await this.addOrganizationMember({
+      organizationId: newOrganization.id,
+      userId: organization.createdBy,
+      status: "active",
+      isOwner: true,
+    });
+    
+    return newOrganization;
+  }
+
+  async updateOrganization(id: string, updates: UpdateOrganization): Promise<Organization | undefined> {
+    const [updated] = await db.update(organizations)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(organizations.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteOrganization(id: string): Promise<boolean> {
+    // Soft delete by setting isActive to false
+    const [updated] = await db.update(organizations)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(organizations.id, id))
+      .returning();
+    return !!updated;
+  }
+
+  // Organization Member operations
+  async getOrganizationMembers(organizationId: string): Promise<OrganizationMemberWithUser[]> {
+    return await db.select({
+      id: organizationMembers.id,
+      organizationId: organizationMembers.organizationId,
+      userId: organizationMembers.userId,
+      status: organizationMembers.status,
+      invitedBy: organizationMembers.invitedBy,
+      joinedAt: organizationMembers.joinedAt,
+      leftAt: organizationMembers.leftAt,
+      invitedAt: organizationMembers.invitedAt,
+      isOwner: organizationMembers.isOwner,
+      user: users,
+    })
+    .from(organizationMembers)
+    .innerJoin(users, eq(organizationMembers.userId, users.id))
+    .where(eq(organizationMembers.organizationId, organizationId));
+  }
+
+  async getOrganizationMember(organizationId: string, userId: string): Promise<OrganizationMember | undefined> {
+    const [member] = await db.select().from(organizationMembers)
+      .where(and(
+        eq(organizationMembers.organizationId, organizationId),
+        eq(organizationMembers.userId, userId)
+      ));
+    return member || undefined;
+  }
+
+  async addOrganizationMember(member: InsertOrganizationMember): Promise<OrganizationMember> {
+    const [newMember] = await db.insert(organizationMembers).values(member).returning();
+    return newMember;
+  }
+
+  async updateOrganizationMember(organizationId: string, userId: string, updates: UpdateOrganizationMember): Promise<OrganizationMember | undefined> {
+    const [updated] = await db.update(organizationMembers)
+      .set(updates)
+      .where(and(
+        eq(organizationMembers.organizationId, organizationId),
+        eq(organizationMembers.userId, userId)
+      ))
+      .returning();
+    return updated || undefined;
+  }
+
+  async removeOrganizationMember(organizationId: string, userId: string): Promise<boolean> {
+    // Set status to "suspended" and leftAt timestamp instead of hard delete
+    const [updated] = await db.update(organizationMembers)
+      .set({ 
+        status: "suspended",
+        leftAt: new Date()
+      })
+      .where(and(
+        eq(organizationMembers.organizationId, organizationId),
+        eq(organizationMembers.userId, userId)
+      ))
+      .returning();
+    return !!updated;
+  }
+
+  async getUserOrganizationMemberships(userId: string): Promise<(OrganizationMember & { organization: Organization })[]> {
+    return await db.select({
+      id: organizationMembers.id,
+      organizationId: organizationMembers.organizationId,
+      userId: organizationMembers.userId,
+      status: organizationMembers.status,
+      invitedBy: organizationMembers.invitedBy,
+      joinedAt: organizationMembers.joinedAt,
+      leftAt: organizationMembers.leftAt,
+      invitedAt: organizationMembers.invitedAt,
+      isOwner: organizationMembers.isOwner,
+      organization: organizations,
+    })
+    .from(organizationMembers)
+    .innerJoin(organizations, eq(organizationMembers.organizationId, organizations.id))
+    .where(and(
+      eq(organizationMembers.userId, userId),
+      eq(organizationMembers.status, "active"),
+      eq(organizations.isActive, true)
+    ));
+  }
+
+  // Organization Role operations
+  async assignRoleToUserInOrganization(userId: string, roleId: string, organizationId: string, assignedBy?: string): Promise<UserRole> {
+    const [newUserRole] = await db.insert(userRoles).values({
+      userId,
+      roleId,
+      organizationId,
+      assignedBy,
+      isActive: true,
+    }).returning();
+    return newUserRole;
+  }
+
+  async revokeRoleFromUserInOrganization(userId: string, roleId: string, organizationId: string): Promise<boolean> {
+    const [updated] = await db.update(userRoles)
+      .set({ isActive: false })
+      .where(and(
+        eq(userRoles.userId, userId),
+        eq(userRoles.roleId, roleId),
+        eq(userRoles.organizationId, organizationId)
+      ))
+      .returning();
+    return !!updated;
+  }
+
+  async getUserRolesInOrganization(userId: string, organizationId: string): Promise<(UserRole & { role: Role })[]> {
+    return await db.select({
+      id: userRoles.id,
+      userId: userRoles.userId,
+      roleId: userRoles.roleId,
+      organizationId: userRoles.organizationId,
+      assignedBy: userRoles.assignedBy,
+      assignedAt: userRoles.assignedAt,
+      expiresAt: userRoles.expiresAt,
+      isActive: userRoles.isActive,
+      role: roles,
+    })
+    .from(userRoles)
+    .innerJoin(roles, eq(userRoles.roleId, roles.id))
+    .where(and(
+      eq(userRoles.userId, userId),
+      eq(userRoles.organizationId, organizationId),
+      eq(userRoles.isActive, true)
+    ));
+  }
+
+  async getOrganizationRoles(organizationId: string): Promise<Role[]> {
+    return await db.select().from(roles)
+      .where(and(
+        eq(roles.organizationId, organizationId),
+        eq(roles.isActive, true)
+      ))
+      .orderBy(roles.displayName);
   }
 
   // RBAC operations

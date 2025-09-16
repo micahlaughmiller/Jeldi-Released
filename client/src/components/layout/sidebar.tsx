@@ -70,9 +70,16 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
         </button>
         
         <Link href="/analytics">
-          <a className="flex items-center space-x-3 px-3 py-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+          <a 
+            className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+              location === "/analytics" 
+                ? "bg-primary text-primary-foreground" 
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            }`}
+            data-testid="nav-analytics"
+          >
             <i className="fas fa-chart-bar w-4"></i>
-            <span>Analytics</span>
+            <span className="font-medium">Analytics</span>
           </a>
         </Link>
         

@@ -159,6 +159,33 @@ export const userPreferences = pgTable("user_preferences", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Organization Tables
+export const organizations = pgTable("organizations", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  description: text("description"),
+  website: text("website"),
+  logo: text("logo"), // URL to organization logo
+  isActive: boolean("is_active").default(true).notNull(),
+  settings: jsonb("settings"), // Organization-specific settings
+  createdBy: uuid("created_by").references(() => users.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const organizationMembers = pgTable("organization_members", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: uuid("organization_id").references(() => organizations.id).notNull(),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  status: text("status").default("active").notNull(), // active, pending, suspended
+  invitedBy: uuid("invited_by").references(() => users.id),
+  joinedAt: timestamp("joined_at").defaultNow().notNull(),
+  leftAt: timestamp("left_at"),
+  invitedAt: timestamp("invited_at"),
+  isOwner: boolean("is_owner").default(false).notNull(),
+});
+
 // RBAC Tables for Role-Based Access Control
 export const roles = pgTable("roles", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -168,6 +195,7 @@ export const roles = pgTable("roles", {
   color: text("color").default("#6366f1").notNull(), // UI color for role badges
   isSystem: boolean("is_system").default(true).notNull(), // System roles vs custom roles
   isActive: boolean("is_active").default(true).notNull(),
+  organizationId: uuid("organization_id").references(() => organizations.id), // null for global roles
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -188,6 +216,7 @@ export const userRoles = pgTable("user_roles", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: uuid("user_id").references(() => users.id).notNull(),
   roleId: uuid("role_id").references(() => roles.id).notNull(),
+  organizationId: uuid("organization_id").references(() => organizations.id), // null for global roles
   assignedBy: uuid("assigned_by").references(() => users.id), // Who assigned this role
   assignedAt: timestamp("assigned_at").defaultNow().notNull(),
   expiresAt: timestamp("expires_at"), // Optional role expiration
@@ -224,10 +253,39 @@ export const userRelations = relations(users, ({ many, one }) => ({
   queryTemplates: many(queryTemplates),
   favoriteQueries: many(favoriteQueries),
   preferences: one(userPreferences),
+  // Organization relations
+  createdOrganizations: many(organizations),
+  organizationMembers: many(organizationMembers),
   // RBAC relations
   userRoles: many(userRoles),
   assignedRoles: many(userRoles, { relationName: "assigned_roles" }),
   auditLogs: many(auditLog),
+}));
+
+// Organization Relations
+export const organizationRelations = relations(organizations, ({ one, many }) => ({
+  creator: one(users, {
+    fields: [organizations.createdBy],
+    references: [users.id],
+  }),
+  members: many(organizationMembers),
+  roles: many(roles),
+  userRoles: many(userRoles),
+}));
+
+export const organizationMemberRelations = relations(organizationMembers, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [organizationMembers.organizationId],
+    references: [organizations.id],
+  }),
+  user: one(users, {
+    fields: [organizationMembers.userId],
+    references: [users.id],
+  }),
+  invitedByUser: one(users, {
+    fields: [organizationMembers.invitedBy],
+    references: [users.id],
+  }),
 }));
 
 export const conversationRelations = relations(conversations, ({ one, many }) => ({
@@ -300,7 +358,11 @@ export const userPreferencesRelations = relations(userPreferences, ({ one }) => 
 }));
 
 // RBAC Relations
-export const roleRelations = relations(roles, ({ many }) => ({
+export const roleRelations = relations(roles, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [roles.organizationId],
+    references: [organizations.id],
+  }),
   userRoles: many(userRoles),
   rolePermissions: many(rolePermissions),
 }));
@@ -317,6 +379,10 @@ export const userRoleRelations = relations(userRoles, ({ one }) => ({
   role: one(roles, {
     fields: [userRoles.roleId],
     references: [roles.id],
+  }),
+  organization: one(organizations, {
+    fields: [userRoles.organizationId],
+    references: [organizations.id],
   }),
   assignedByUser: one(users, {
     fields: [userRoles.assignedBy],
@@ -419,6 +485,28 @@ export const updateUserPreferencesSchema = insertUserPreferencesSchema.omit({
   userId: true,
 }).partial();
 
+// Organization Insert Schemas
+export const insertOrganizationSchema = createInsertSchema(organizations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateOrganizationSchema = insertOrganizationSchema.omit({
+  createdBy: true,
+}).partial();
+
+export const insertOrganizationMemberSchema = createInsertSchema(organizationMembers).omit({
+  id: true,
+  joinedAt: true,
+  invitedAt: true,
+});
+
+export const updateOrganizationMemberSchema = insertOrganizationMemberSchema.omit({
+  organizationId: true,
+  userId: true,
+}).partial();
+
 // RBAC Insert Schemas
 export const insertRoleSchema = createInsertSchema(roles).omit({
   id: true,
@@ -482,6 +570,14 @@ export type InsertUserPreferences = z.infer<typeof insertUserPreferencesSchema>;
 export type UpdateUserPreferences = z.infer<typeof updateUserPreferencesSchema>;
 export type UserPreferences = typeof userPreferences.$inferSelect;
 
+// Organization Types
+export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
+export type UpdateOrganization = z.infer<typeof updateOrganizationSchema>;
+export type Organization = typeof organizations.$inferSelect;
+export type InsertOrganizationMember = z.infer<typeof insertOrganizationMemberSchema>;
+export type UpdateOrganizationMember = z.infer<typeof updateOrganizationMemberSchema>;
+export type OrganizationMember = typeof organizationMembers.$inferSelect;
+
 // RBAC Types
 export type InsertRole = z.infer<typeof insertRoleSchema>;
 export type UpdateRole = z.infer<typeof updateRoleSchema>;
@@ -506,6 +602,21 @@ export interface RoleWithPermissions extends Role {
   permissions: Permission[];
 }
 
+// Extended Organization Types
+export interface OrganizationWithMembers extends Organization {
+  members: (OrganizationMember & { user: User })[];
+  memberCount: number;
+}
+
+export interface UserWithOrganizations extends User {
+  organizationMembers: (OrganizationMember & { organization: Organization })[];
+}
+
+export interface OrganizationMemberWithUser extends OrganizationMember {
+  user: User;
+  invitedByUser?: User;
+}
+
 // Permission validation schemas
 export const roleAssignmentSchema = z.object({
   userId: z.string().uuid(),
@@ -523,9 +634,31 @@ export const permissionCheckSchema = z.object({
   action: z.string(),
 });
 
+// Organization management validation schemas
+export const organizationInviteSchema = z.object({
+  email: z.string().email(),
+  organizationId: z.string().uuid(),
+});
+
+export const organizationRoleAssignmentSchema = z.object({
+  userId: z.string().uuid(),
+  roleId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+});
+
+export const organizationMemberUpdateSchema = z.object({
+  userId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  status: z.enum(["active", "pending", "suspended"]).optional(),
+  isOwner: z.boolean().optional(),
+});
+
 export type RoleAssignment = z.infer<typeof roleAssignmentSchema>;
 export type RoleRevocation = z.infer<typeof roleRevocationSchema>;
 export type PermissionCheck = z.infer<typeof permissionCheckSchema>;
+export type OrganizationInvite = z.infer<typeof organizationInviteSchema>;
+export type OrganizationRoleAssignment = z.infer<typeof organizationRoleAssignmentSchema>;
+export type OrganizationMemberUpdate = z.infer<typeof organizationMemberUpdateSchema>;
 
 // Email API Response Types
 export interface EmailProviderStatus {
