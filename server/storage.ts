@@ -20,6 +20,7 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByOAuthId(provider: string, oauthId: string): Promise<User | undefined>;
+  getUserCount(): Promise<number>;
   createUser(user: InsertUser): Promise<User>;
   createOAuthUser(user: InsertOAuthUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User | undefined>;
@@ -158,6 +159,11 @@ export class DatabaseStorage implements IStorage {
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.email, email));
     return user || undefined;
+  }
+
+  async getUserCount(): Promise<number> {
+    const [result] = await db.select({ count: sql<number>`count(*)` }).from(users);
+    return result.count;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {

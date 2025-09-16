@@ -115,13 +115,17 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
       const hashedPassword = await bcrypt.hash(password, 10);
       
+      // Check if this is the first user (make them admin)
+      const userCount = await storage.getUserCount();
+      const isFirstUser = userCount === 0;
+      
       // Create user
       const user = await storage.createUser({
         username,
         email,
         password: hashedPassword,
         authProvider: "local",
-        role: "user"
+        role: isFirstUser ? "admin" : "user"
       });
 
       // Generate token

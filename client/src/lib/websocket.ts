@@ -132,14 +132,23 @@ export function getWebSocketClient(): WebSocketClient {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     // Handle Replit environment properly
     let host = window.location.host;
-    if (host.includes(':undefined') || !host.includes(':')) {
-      // Use hostname without port for WebSocket connection
-      host = window.location.hostname + (window.location.port ? ':' + window.location.port : '');
-      // If still no port, use current page port or default
-      if (!window.location.port && window.location.hostname === 'localhost') {
-        host = window.location.hostname + ':5000';
-      }
+    
+    // Fix for Replit environment where host might include ':undefined'
+    if (host.includes(':undefined')) {
+      host = window.location.hostname;
     }
+    
+    // For development localhost without port
+    if (window.location.hostname === 'localhost' && !window.location.port) {
+      host = 'localhost:5000';
+    }
+    
+    // Ensure we don't have undefined port in the URL
+    if (!host.includes(':') && window.location.hostname !== 'localhost') {
+      // In production/Replit, use the hostname without explicit port
+      host = window.location.hostname;
+    }
+    
     const wsUrl = `${protocol}//${host}/ws`;
     wsClient = new WebSocketClient(wsUrl);
   }
