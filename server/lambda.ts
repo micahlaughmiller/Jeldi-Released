@@ -69,6 +69,33 @@ app.use((req: express.Request, res: express.Response, next: express.NextFunction
   next();
 });
 
+// Static file serving for Lambda deployment
+import path from 'path';
+const publicPath = path.join(__dirname, 'public');
+app.use(express.static(publicPath, {
+  maxAge: '1h', // Cache static assets for 1 hour
+  etag: true,
+  setHeaders: (res: express.Response, filePath: string) => {
+    // Set appropriate cache headers for different file types
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000'); // 1 year for versioned assets
+    }
+  }
+}));
+
+// Serve index.html for all non-API routes (SPA fallback)
+app.get('*', (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  // Skip for API routes
+  if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+    return next();
+  }
+  
+  const indexPath = path.join(publicPath, 'index.html');
+  res.sendFile(indexPath);
+});
+
 // Request logging middleware (without response body to prevent PII leakage)
 app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
   const start = Date.now();
