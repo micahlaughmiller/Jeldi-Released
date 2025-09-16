@@ -128,6 +128,21 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         role: isFirstUser ? "admin" : "user"
       });
 
+      // Assign RBAC role based on whether this is the first user
+      try {
+        const roleName = isFirstUser ? "admin" : "user";
+        const role = await storage.getRoleByName(roleName);
+        if (role) {
+          await storage.assignRoleToUser(user.id, role.id);
+          console.log(`Assigned ${roleName} role to user ${user.email}`);
+        } else {
+          console.warn(`Role '${roleName}' not found for user assignment`);
+        }
+      } catch (roleError) {
+        console.error("Error assigning role to user:", roleError);
+        // Don't fail registration if role assignment fails
+      }
+
       // Generate token
       const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
       

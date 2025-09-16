@@ -97,6 +97,37 @@ export class RBACService {
   }
 
   /**
+   * Ensure existing users have RBAC roles assigned based on their legacy role field
+   */
+  static async ensureExistingUsersHaveRoles(): Promise<void> {
+    try {
+      // Get all users
+      const users = await storage.getAllUsersWithRoles();
+      
+      for (const user of users) {
+        // Check if user already has RBAC roles assigned
+        if (user.userRoles && user.userRoles.length > 0) {
+          continue; // User already has RBAC roles
+        }
+        
+        // Assign RBAC role based on legacy role field
+        let roleName = "user"; // Default to user role
+        if (user.role === "admin") {
+          roleName = "admin";
+        }
+        
+        const role = await storage.getRoleByName(roleName);
+        if (role) {
+          await storage.assignRoleToUser(user.id, role.id);
+          console.log(`Migrated user ${user.email} to RBAC role: ${roleName}`);
+        }
+      }
+    } catch (error) {
+      console.error("Error ensuring existing users have roles:", error);
+    }
+  }
+
+  /**
    * Initialize default roles and permissions
    */
   static async initializeDefaultRoles(): Promise<void> {
@@ -269,7 +300,7 @@ export class RBACService {
           "kpi.view", "ai.basic", "email.send", "settings.view"
         ],
         user: [
-          "kpi.view", "ai.basic", "settings.view"
+          "kpi.view", "ai.basic", "email.send", "email.manage", "settings.view"
         ]
       };
 
@@ -277,6 +308,9 @@ export class RBACService {
       for (const [roleName, permissionNames] of Object.entries(rolePermissionMappings)) {
         await storage.assignPermissionsToRole(roleName, permissionNames);
       }
+
+      // Fix existing users who don't have RBAC roles assigned
+      await RBACService.ensureExistingUsersHaveRoles();
 
       console.log("Default roles and permissions initialized successfully");
     } catch (error) {

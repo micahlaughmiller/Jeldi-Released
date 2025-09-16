@@ -201,6 +201,17 @@ export class OAuthService {
       };
 
       user = await storage.createOAuthUser(userData);
+      
+      // Assign RBAC role for new OAuth user (always regular user role, not admin)
+      try {
+        const role = await storage.getRoleByName("user");
+        if (role) {
+          await storage.assignRoleToUser(user.id, role.id);
+          console.log(`Assigned user role to OAuth user ${user.email}`);
+        }
+      } catch (roleError) {
+        console.error("Error assigning role to OAuth user:", roleError);
+      }
     }
 
     if (!user) {
