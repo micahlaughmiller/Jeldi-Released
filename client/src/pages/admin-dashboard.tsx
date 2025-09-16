@@ -207,7 +207,7 @@ export default function AdminDashboard() {
                           onClick={() => setActiveTab("users")}
                           data-testid="quick-action-add-user"
                         >
-                          <i className="fas fa-user-plus text-xl text-blue-600"></i>
+                          <i className="fas fa-user-plus text-xl text-primary"></i>
                           <span className="text-sm">Add User</span>
                         </Button>
                         <Button 

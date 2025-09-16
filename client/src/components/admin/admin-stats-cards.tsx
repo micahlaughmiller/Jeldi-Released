@@ -20,8 +20,8 @@ export function AdminStatsCards({ stats, isLoading }: AdminStatsCardsProps) {
       title: "Total Users",
       value: stats?.totalUsers || 0,
       icon: "fas fa-users",
-      color: "text-blue-600",
-      bgColor: "bg-blue-50",
+      color: "text-primary",
+      bgColor: "bg-primary/10",
       description: "Registered users",
       testId: "stat-total-users"
     },
@@ -38,8 +38,8 @@ export function AdminStatsCards({ stats, isLoading }: AdminStatsCardsProps) {
       title: "System Roles",
       value: stats?.totalRoles || 0,
       icon: "fas fa-user-shield",
-      color: "text-purple-600",
-      bgColor: "bg-purple-50", 
+      color: "text-primary",
+      bgColor: "bg-primary/10", 
       description: "Configured roles",
       testId: "stat-total-roles"
     },
@@ -56,8 +56,8 @@ export function AdminStatsCards({ stats, isLoading }: AdminStatsCardsProps) {
       title: "Recent Logins",
       value: stats?.recentLogins || 0,
       icon: "fas fa-sign-in-alt",
-      color: "text-indigo-600",
-      bgColor: "bg-indigo-50",
+      color: "text-primary",
+      bgColor: "bg-primary/10",
       description: "Last 24 hours",
       testId: "stat-recent-logins"
     }

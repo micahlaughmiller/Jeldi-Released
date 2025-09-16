@@ -369,7 +369,7 @@ export function AdminSettings() {
 
                 <div className="flex items-center justify-between p-4 border rounded-lg">
                   <div className="flex items-center gap-3">
-                    <i className="fab fa-microsoft text-2xl text-blue-500"></i>
+                    <i className="fab fa-microsoft text-2xl text-primary"></i>
                     <div>
                       <h4 className="font-medium">Microsoft OAuth</h4>
                       <p className="text-sm text-muted-foreground">

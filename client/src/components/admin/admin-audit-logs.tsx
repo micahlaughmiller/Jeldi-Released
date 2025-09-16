@@ -68,14 +68,14 @@ export function AdminAuditLogs() {
   });
 
   const getActionIcon = (action: string) => {
-    if (action.includes('login')) return 'fas fa-sign-in-alt text-blue-500';
+    if (action.includes('login')) return 'fas fa-sign-in-alt text-primary';
     if (action.includes('logout')) return 'fas fa-sign-out-alt text-gray-500';
     if (action.includes('created')) return 'fas fa-plus text-green-500';
     if (action.includes('updated')) return 'fas fa-edit text-orange-500';
     if (action.includes('deleted')) return 'fas fa-trash text-red-500';
     if (action.includes('assigned')) return 'fas fa-user-tag text-purple-500';
     if (action.includes('revoked')) return 'fas fa-user-minus text-red-500';
-    if (action.includes('accessed')) return 'fas fa-eye text-blue-500';
+    if (action.includes('accessed')) return 'fas fa-eye text-primary';
     return 'fas fa-info-circle text-gray-500';
   };
 

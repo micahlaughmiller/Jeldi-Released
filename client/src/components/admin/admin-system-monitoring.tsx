@@ -144,7 +144,7 @@ export function AdminSystemMonitoring() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <i className="fas fa-database text-blue-600"></i>
+                  <i className="fas fa-database text-primary"></i>
                   Database
                 </CardTitle>
                 <CardDescription>
@@ -327,7 +327,7 @@ export function AdminSystemMonitoring() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-3 bg-muted rounded">
                     <div className="flex items-center gap-3">
-                      <i className="fas fa-users text-blue-600"></i>
+                      <i className="fas fa-users text-primary"></i>
                       <span className="font-medium">Active Users</span>
                     </div>
                     <span className="text-xl font-bold" data-testid="active-users-metric">
