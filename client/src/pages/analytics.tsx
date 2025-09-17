@@ -14,7 +14,8 @@ import Sidebar from "@/components/layout/sidebar";
 import Header from "@/components/layout/header";
 import { useToast } from "@/hooks/use-toast";
 import { performLogout } from "@/lib/logout";
-import { BarChart3, TrendingUp, TrendingDown, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Activity } from "lucide-react";
+import { BarChart3, TrendingUp, TrendingDown, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, Activity, Settings } from "lucide-react";
+import KpiCustomization from "@/components/kpi/kpi-customization";
 
 interface User {
   id: string;
@@ -128,6 +129,7 @@ export default function Analytics() {
   const [user, setUser] = useState<User | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState("12m");
   const [activeTab, setActiveTab] = useState("overview");
+  const [showKpiCustomization, setShowKpiCustomization] = useState(false);
   const { toast } = useToast();
 
   // Analytics Overview Query
@@ -338,11 +340,15 @@ export default function Analytics() {
 
           {/* Analytics Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="revenue">Revenue</TabsTrigger>
               <TabsTrigger value="operations">Operations</TabsTrigger>
               <TabsTrigger value="insights">Insights</TabsTrigger>
+              <TabsTrigger value="kpis" data-testid="tab-kpis">
+                <Settings className="h-4 w-4 mr-2" />
+                KPIs
+              </TabsTrigger>
             </TabsList>
 
             {/* Overview Tab */}
@@ -779,6 +785,12 @@ export default function Analytics() {
                 </Alert>
               )}
             </TabsContent>
+
+            {/* KPIs Tab */}
+            <TabsContent value="kpis" className="space-y-6">
+              <KpiCustomization />
+            </TabsContent>
+
           </Tabs>
         </div>
       </main>

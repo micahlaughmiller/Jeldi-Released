@@ -160,70 +160,75 @@ export default function AIAssistant() {
     staleTime: 5 * 60 * 1000,
     enabled: isAuthenticated,
     retry: false,
-    onError: (error: any) => {
-      if (error?.message?.includes('401') || error?.message?.includes('403')) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        navigate("/login");
-      }
-    }
   });
 
+  useEffect(() => {
+    if (userError?.message?.includes('401') || userError?.message?.includes('403')) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      navigate("/login");
+    }
+  }, [userError, navigate]);
+
   // Query for conversations with authentication check
-  const { data: conversations = [], refetch: refetchConversations } = useQuery<Conversation[]>({
+  const { data: conversations = [], refetch: refetchConversations, error: conversationsError } = useQuery<Conversation[]>({
     queryKey: ['/api/conversations'],
     enabled: isAuthenticated,
     retry: false,
-    onError: (error: any) => {
-      if (error?.message?.includes('401') || error?.message?.includes('403')) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        navigate("/login");
-      }
-    }
   });
 
+  useEffect(() => {
+    if (conversationsError?.message?.includes('401') || conversationsError?.message?.includes('403')) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      navigate("/login");
+    }
+  }, [conversationsError, navigate]);
+
   // Query for conversation details with authentication check
-  const { data: conversationData } = useQuery({
+  const { data: conversationData, error: conversationError } = useQuery({
     queryKey: ['/api/conversations', currentConversation?.id],
     enabled: !!currentConversation?.id && isAuthenticated,
     retry: false,
-    onError: (error: any) => {
-      if (error?.message?.includes('401') || error?.message?.includes('403')) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        navigate("/login");
-      }
-    }
   });
 
+  useEffect(() => {
+    if (conversationError?.message?.includes('401') || conversationError?.message?.includes('403')) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      navigate("/login");
+    }
+  }, [conversationError, navigate]);
+
   // Query for query templates with authentication check
-  const { data: templatesData } = useQuery({
+  const { data: templatesData, error: templatesError } = useQuery({
     queryKey: ['/api/query-templates'],
     enabled: isAuthenticated,
     retry: false,
-    onError: (error: any) => {
-      if (error?.message?.includes('401') || error?.message?.includes('403')) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        navigate("/login");
-      }
-    }
   });
 
+  useEffect(() => {
+    if (templatesError?.message?.includes('401') || templatesError?.message?.includes('403')) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      navigate("/login");
+    }
+  }, [templatesError, navigate]);
+
   // Query for favorite queries with authentication check
-  const { data: favorites = [] } = useQuery<FavoriteQuery[]>({
+  const { data: favorites = [], error: favoritesError } = useQuery<FavoriteQuery[]>({
     queryKey: ['/api/favorite-queries'],
     enabled: isAuthenticated,
     retry: false,
-    onError: (error: any) => {
-      if (error?.message?.includes('401') || error?.message?.includes('403')) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        navigate("/login");
-      }
-    }
   });
+
+  useEffect(() => {
+    if (favoritesError?.message?.includes('401') || favoritesError?.message?.includes('403')) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      navigate("/login");
+    }
+  }, [favoritesError, navigate]);
 
   // Create conversation mutation
   const createConversationMutation = useMutation({
@@ -424,19 +429,19 @@ export default function AIAssistant() {
               {/* Quick Actions */}
               <div className="mb-4">
                 <h3 className="text-sm font-medium text-muted-foreground mb-2">Quick Actions</h3>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2">
                   {businessTemplates.slice(0, 4).map((template) => (
                     <Button
                       key={template.id}
                       variant="outline"
                       size="sm"
-                      className="justify-start h-auto p-2 text-left min-h-[3rem] flex-col"
+                      className="justify-start h-auto p-3 text-left min-h-[3.5rem] flex-col w-full"
                       onClick={() => handleTemplateClick(template)}
                       data-testid={`template-${template.id}`}
                     >
-                      <div className="flex items-center w-full">
-                        <i className={`${template.icon} text-xs mr-1 flex-shrink-0`}></i>
-                        <div className="text-xs font-medium text-left break-words leading-tight">{template.name}</div>
+                      <div className="flex items-start w-full gap-2">
+                        <i className={`${template.icon} text-sm mt-0.5 flex-shrink-0 text-primary`}></i>
+                        <div className="text-xs font-medium text-left break-words leading-tight overflow-wrap-anywhere flex-1">{template.name}</div>
                       </div>
                     </Button>
                   ))}
@@ -623,13 +628,13 @@ export default function AIAssistant() {
                                   <i className="fas fa-question-circle mr-1"></i>
                                   Follow-up Questions
                                 </h4>
-                                <div className="flex flex-wrap gap-1">
+                                <div className="flex flex-col gap-1">
                                   {message.followUpQuestions.map((question: string, i: number) => (
                                     <Button
                                       key={i}
                                       variant="outline"
                                       size="sm"
-                                      className="text-xs h-auto py-1 px-2 whitespace-normal text-left"
+                                      className="text-xs h-auto py-2 px-3 text-left break-words overflow-wrap-anywhere w-full justify-start"
                                       onClick={() => setQuery(question)}
                                       data-testid={`followup-${i}`}
                                     >

@@ -799,6 +799,7 @@ export class DatabaseStorage implements IStorage {
       assignedAt: userRoles.assignedAt,
       expiresAt: userRoles.expiresAt,
       isActive: userRoles.isActive,
+      organizationId: userRoles.organizationId,
       role: roles,
     })
     .from(userRoles)
