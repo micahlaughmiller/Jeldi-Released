@@ -1,14 +1,13 @@
-import type { Express } from "express";
+import type { Express, RequestHandler, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { erpService } from "./services/erpService";
 import { emailService } from "./services/emailService";
 import { analyzeERPData, generateKPIInsights } from "./services/openai";
-import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema, updateUserPreferencesSchema, insertUserPreferencesSchema, insertRoleSchema, updateRoleSchema, roleAssignmentSchema, roleRevocationSchema, insertPermissionSchema, insertOrganizationSchema, updateOrganizationSchema, insertOrganizationMemberSchema, updateOrganizationMemberSchema, organizationInviteSchema, organizationRoleAssignmentSchema, organizationMemberUpdateSchema, users } from "@shared/schema";
+import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema, updateUserPreferencesSchema, insertUserPreferencesSchema, insertRoleSchema, updateRoleSchema, roleAssignmentSchema, roleRevocationSchema, insertPermissionSchema, insertOrganizationSchema, updateOrganizationSchema, insertOrganizationMemberSchema, updateOrganizationMemberSchema, organizationInviteSchema, organizationRoleAssignmentSchema, organizationMemberUpdateSchema, users, AuthUser } from "@shared/schema";
 
 // Type definitions
-type User = typeof users.$inferSelect;
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import passport from "passport";
@@ -16,13 +15,17 @@ import { OAuthService } from "./services/oauthService";
 import { getJwtSecret } from "./env-validation";
 import { RBACService, AuthenticatedRequest, loadUserPermissions, requirePermission, requireRole, requireAdmin, authWithPermissions } from "./services/rbac";
 
+// Type helper to convert AuthenticatedRequest handlers to standard RequestHandler
+const asAuth = (h: (req: AuthenticatedRequest, res: Response, next: NextFunction) => any): RequestHandler => 
+  (req, res, next) => h(req as AuthenticatedRequest, res, next);
+
 // JWT_SECRET accessed at runtime, not import-time
 const getJwtSecretAtRuntime = () => getJwtSecret();
 
 // WebSocket clients tracking with permission data
 interface WSClient {
   ws: WebSocket;
-  user: User;
+  user: AuthUser;
   permissions: string[];
 }
 const wsClients = new Map<string, WSClient>();
@@ -85,19 +88,26 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-      return res.status(401).json({ message: 'Access token required' });
+      return res.status(401).json({ message: 'Access token required' }));
     }
 
     try {
       const decoded = jwt.verify(token, getJwtSecretAtRuntime()) as any;
       const user = await storage.getUser(decoded.userId);
       if (!user) {
-        return res.status(403).json({ message: 'Invalid token' });
+        return res.status(403).json({ message: 'Invalid token' }));
       }
-      req.user = user;
+      // Extract only AuthUser fields to match AuthenticatedRequest interface
+      req.user = {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        authProvider: user.authProvider
+      };
       next();
     } catch (error) {
-      return res.status(403).json({ message: 'Invalid token' });
+      return res.status(403).json({ message: 'Invalid token' }));
     }
   };
 
@@ -109,12 +119,12 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // Check if user exists
       const existingUser = await storage.getUserByEmail(email);
       if (existingUser) {
-        return res.status(400).json({ message: "User already exists" });
+        return res.status(400).json({ message: "User already exists" }));
       }
 
       // Hash password (ensure password is provided for local registration)
       if (!password) {
-        return res.status(400).json({ message: "Password is required for registration" });
+        return res.status(400).json({ message: "Password is required for registration" }));
       }
       const hashedPassword = await bcrypt.hash(password, 10);
       
@@ -129,7 +139,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         password: hashedPassword,
         authProvider: "local",
         role: isFirstUser ? "admin" : "user"
-      });
+      }));
 
       // Assign RBAC role based on whether this is the first user
       try {
@@ -147,16 +157,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
 
       // Generate token
-      const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+      const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' }));
       
       res.json({ 
         token, 
         user: { id: user.id, username: user.username, email: user.email, role: user.role }
-      });
+      }));
     } catch (error) {
-      res.status(400).json({ message: "Registration failed", error: (error as Error).message });
+      res.status(400).json({ message: "Registration failed", error: (error as Error).message }));
     }
-  });
+  }));
 
   app.post("/api/auth/login", async (req, res) => {
     try {
@@ -164,31 +174,31 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       const user = await storage.getUserByEmail(email);
       if (!user) {
-        return res.status(401).json({ message: "Invalid credentials" });
+        return res.status(401).json({ message: "Invalid credentials" }));
       }
 
       // Check if this is an OAuth user trying to login with password
       if (user.authProvider !== "local" || !user.password) {
-        return res.status(401).json({ message: "Please use OAuth login for this account" });
+        return res.status(401).json({ message: "Please use OAuth login for this account" }));
       }
 
       const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
-        return res.status(401).json({ message: "Invalid credentials" });
+        return res.status(401).json({ message: "Invalid credentials" }));
       }
 
-      const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+      const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' }));
       
       res.json({ 
         token, 
         user: { id: user.id, username: user.username, email: user.email, role: user.role }
-      });
+      }));
     } catch (error) {
-      res.status(400).json({ message: "Login failed", error: (error as Error).message });
+      res.status(400).json({ message: "Login failed", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/auth/logout", authenticateToken, async (req: any, res) => {
+  app.post("/api/auth/logout", authenticateToken, asAuth(async (req, res) => {
     try {
       // In a more advanced implementation, you could maintain a blacklist
       // of revoked tokens or use a token store like Redis
@@ -198,18 +208,18 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.json({ 
         message: "Logout successful", 
         timestamp: new Date().toISOString() 
-      });
+      }));
     } catch (error) {
       console.error("Logout error:", error);
       res.status(500).json({ 
         message: "Logout failed", 
         error: (error as Error).message 
-      });
+      }));
     }
-  });
+  }));
 
   // Get current user info
-  app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
+  app.get("/api/auth/me", authenticateToken, asAuth(async (req, res) => {
     try {
       const user = req.user;
       res.json({ 
@@ -218,11 +228,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         email: user.email, 
         role: user.role,
         authProvider: user.authProvider
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to get user info", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to get user info", error: (error as Error).message }));
     }
-  });
+  }));
 
   // OAuth routes
   app.get("/api/oauth/providers", async (req, res) => {
@@ -233,9 +243,9 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         displayName: p.displayName
       })));
     } catch (error) {
-      res.status(500).json({ message: "Failed to get OAuth providers", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to get OAuth providers", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Secure OAuth session retrieval endpoint
   app.get("/api/auth/oauth-result/:sessionId", async (req, res) => {
@@ -244,15 +254,15 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const authResult = await OAuthService.getCompletedOAuthSession(sessionId);
       
       if (!authResult) {
-        return res.status(404).json({ message: "OAuth session not found or expired" });
+        return res.status(404).json({ message: "OAuth session not found or expired" }));
       }
       
       res.json(authResult);
     } catch (error) {
       console.error("OAuth session retrieval error:", error);
-      res.status(500).json({ message: "Failed to retrieve OAuth result", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to retrieve OAuth result", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Google OAuth routes
   app.get("/api/auth/google", async (req, res, next) => {
@@ -267,7 +277,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
             required_variables: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
             instructions: "Please contact your administrator to configure Google OAuth credentials."
           }
-        });
+        }));
       }
 
       // Generate secure CSRF state
@@ -282,7 +292,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       console.error("Google OAuth initiation error:", error);
       res.redirect("/login?error=oauth_failed");
     }
-  });
+  }));
   
   app.get("/api/auth/google/callback",
     passport.authenticate("google", { session: false, failureRedirect: "/login?error=oauth_failed" }),
@@ -299,59 +309,59 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   );
 
   // User Settings routes
-  app.get("/api/user/preferences", authenticateToken, async (req: any, res) => {
+  app.get("/api/user/preferences", authenticateToken, asAuth(async (req, res) => {
     try {
       let preferences = await storage.getUserPreferences(req.user.id);
       
       // If user has no preferences, create default ones
       if (!preferences) {
-        preferences = await storage.createUserPreferences({ userId: req.user.id });
+        preferences = await storage.createUserPreferences({ userId: req.user.id }));
       }
       
       res.json(preferences);
     } catch (error) {
       console.error("Get user preferences error:", error);
-      res.status(500).json({ message: "Failed to get user preferences", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to get user preferences", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.put("/api/user/preferences", authenticateToken, async (req: any, res) => {
+  app.put("/api/user/preferences", authenticateToken, asAuth(async (req, res) => {
     try {
       const updates = updateUserPreferencesSchema.parse(req.body);
       
       // Check if user has preferences, create if not exists
       let preferences = await storage.getUserPreferences(req.user.id);
       if (!preferences) {
-        preferences = await storage.createUserPreferences({ userId: req.user.id });
+        preferences = await storage.createUserPreferences({ userId: req.user.id }));
       }
       
       const updatedPreferences = await storage.updateUserPreferences(req.user.id, updates);
       
       if (!updatedPreferences) {
-        return res.status(404).json({ message: "User preferences not found" });
+        return res.status(404).json({ message: "User preferences not found" }));
       }
       
       res.json(updatedPreferences);
     } catch (error) {
       console.error("Update user preferences error:", error);
-      res.status(400).json({ message: "Failed to update user preferences", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to update user preferences", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.put("/api/user/profile", authenticateToken, async (req: any, res) => {
+  app.put("/api/user/profile", authenticateToken, asAuth(async (req, res) => {
     try {
       const { username, email, firstName, lastName, profileImage } = req.body;
       
       // Validate input
       if (!username && !email && !firstName && !lastName && !profileImage) {
-        return res.status(400).json({ message: "At least one field must be provided for update" });
+        return res.status(400).json({ message: "At least one field must be provided for update" }));
       }
       
       // If email is being updated, check it's not already in use
       if (email && email !== req.user.email) {
         const existingUser = await storage.getUserByEmail(email);
         if (existingUser && existingUser.id !== req.user.id) {
-          return res.status(400).json({ message: "Email already in use" });
+          return res.status(400).json({ message: "Email already in use" }));
         }
       }
       
@@ -359,7 +369,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       if (username && username !== req.user.username) {
         const existingUser = await storage.getUserByUsername(username);
         if (existingUser && existingUser.id !== req.user.id) {
-          return res.status(400).json({ message: "Username already in use" });
+          return res.status(400).json({ message: "Username already in use" }));
         }
       }
       
@@ -373,7 +383,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const updatedUser = await storage.updateUser(req.user.id, updates);
       
       if (!updatedUser) {
-        return res.status(404).json({ message: "User not found" });
+        return res.status(404).json({ message: "User not found" }));
       }
       
       // Return user without password
@@ -381,59 +391,59 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.json(userWithoutPassword);
     } catch (error) {
       console.error("Update user profile error:", error);
-      res.status(400).json({ message: "Failed to update user profile", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to update user profile", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.put("/api/user/password", authenticateToken, async (req: any, res) => {
+  app.put("/api/user/password", authenticateToken, asAuth(async (req, res) => {
     try {
       const { currentPassword, newPassword } = req.body;
       
       if (!currentPassword || !newPassword) {
-        return res.status(400).json({ message: "Both current and new password are required" });
+        return res.status(400).json({ message: "Both current and new password are required" }));
       }
       
       if (newPassword.length < 8) {
-        return res.status(400).json({ message: "New password must be at least 8 characters long" });
+        return res.status(400).json({ message: "New password must be at least 8 characters long" }));
       }
       
       // For OAuth users, password change is not allowed
       if (req.user.authProvider !== "local" || !req.user.password) {
-        return res.status(400).json({ message: "Password change not available for OAuth accounts" });
+        return res.status(400).json({ message: "Password change not available for OAuth accounts" }));
       }
       
       // Verify current password
       const isValidCurrentPassword = await bcrypt.compare(currentPassword, req.user.password);
       if (!isValidCurrentPassword) {
-        return res.status(400).json({ message: "Current password is incorrect" });
+        return res.status(400).json({ message: "Current password is incorrect" }));
       }
       
       // Hash new password
       const hashedNewPassword = await bcrypt.hash(newPassword, 10);
       
       // Update password
-      const updatedUser = await storage.updateUser(req.user.id, { password: hashedNewPassword });
+      const updatedUser = await storage.updateUser(req.user.id, { password: hashedNewPassword }));
       
       if (!updatedUser) {
-        return res.status(404).json({ message: "User not found" });
+        return res.status(404).json({ message: "User not found" }));
       }
       
-      res.json({ message: "Password updated successfully" });
+      res.json({ message: "Password updated successfully" }));
     } catch (error) {
       console.error("Change password error:", error);
-      res.status(400).json({ message: "Failed to change password", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to change password", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/user/preferences/reset", authenticateToken, async (req: any, res) => {
+  app.post("/api/user/preferences/reset", authenticateToken, asAuth(async (req, res) => {
     try {
       const preferences = await storage.resetUserPreferences(req.user.id);
       res.json(preferences);
     } catch (error) {
       console.error("Reset user preferences error:", error);
-      res.status(500).json({ message: "Failed to reset user preferences", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to reset user preferences", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Microsoft OAuth routes
   app.get("/api/auth/microsoft", async (req, res, next) => {
@@ -448,7 +458,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
             required_variables: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
             instructions: "Please contact your administrator to configure Microsoft OAuth credentials."
           }
-        });
+        }));
       }
 
       // Generate secure CSRF state
@@ -463,7 +473,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       console.error("Microsoft OAuth initiation error:", error);
       res.redirect("/login?error=oauth_failed");
     }
-  });
+  }));
   
   app.get("/api/auth/microsoft/callback",
     passport.authenticate("microsoft", { session: false, failureRedirect: "/login?error=oauth_failed" }),
@@ -480,33 +490,33 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   );
 
   // ERP Connection routes
-  app.get("/api/erp/systems", authenticateToken, requirePermission("erp_connections", "read"), async (req: any, res) => {
+  app.get("/api/erp/systems", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
       const systems = await erpService.getConnectedSystems(req.user.id);
       res.json(systems);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch ERP systems", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch ERP systems", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/erp/connect/:system", authenticateToken, requirePermission("erp_connections", "create"), async (req: any, res) => {
+  app.post("/api/erp/connect/:system", authenticateToken, requirePermission("erp_connections", "create"), asAuth(async (req, res) => {
     try {
       const { system } = req.params;
       const redirectUri = process.env.OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/erp/callback`;
       
       const authUrl = await erpService.initiateOAuthFlow(system, req.user.id, redirectUri);
-      res.json({ authUrl });
+      res.json({ authUrl }));
     } catch (error) {
-      res.status(400).json({ message: "Failed to initiate OAuth", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to initiate OAuth", error: (error as Error).message }));
     }
-  });
+  }));
 
   app.get("/api/erp/callback", async (req, res) => {
     try {
       const { code, state } = req.query;
       
       if (!code || !state) {
-        return res.status(400).json({ message: "Missing code or state parameter" });
+        return res.status(400).json({ message: "Missing code or state parameter" }));
       }
 
       const connection = await erpService.handleOAuthCallback(code as string, state as string);
@@ -517,11 +527,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // Redirect to dashboard with success message
       res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard?connected=${connection.erpSystem}`);
     } catch (error) {
-      res.status(400).json({ message: "OAuth callback failed", error: (error as Error).message });
+      res.status(400).json({ message: "OAuth callback failed", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.delete("/api/erp/disconnect/:system", authenticateToken, requirePermission("erp_connections", "manage"), async (req: any, res) => {
+  app.delete("/api/erp/disconnect/:system", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
     try {
       const { system } = req.params;
       await erpService.disconnectSystem(req.user.id, system);
@@ -529,28 +539,28 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // Broadcast ERP status update via WebSocket
       await broadcastERPStatusUpdate(req.user.id);
       
-      res.json({ message: "System disconnected successfully" });
+      res.json({ message: "System disconnected successfully" }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to disconnect system", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to disconnect system", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.get("/api/erp/data", authenticateToken, requirePermission("erp_connections", "read"), async (req: any, res) => {
+  app.get("/api/erp/data", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
       const data = await erpService.aggregateERPData(req.user.id);
       res.json(data);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch ERP data", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch ERP data", error: (error as Error).message }));
     }
-  });
+  }));
 
   // RBAC routes
   // Get current user's roles and permissions
-  app.get("/api/rbac/me", authenticateToken, loadUserPermissions, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/rbac/me", authenticateToken, loadUserPermissions, asAuth(async (req, res) => {
     try {
       const userWithRoles = await RBACService.getUserWithPermissions(req.user!.id);
       if (!userWithRoles) {
-        return res.status(404).json({ message: "User not found" });
+        return res.status(404).json({ message: "User not found" }));
       }
 
       res.json({
@@ -558,24 +568,24 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         roles: userWithRoles.userRoles.map(ur => ur.role),
         permissions: userWithRoles.permissions,
         roleNames: userWithRoles.userRoles.map(ur => ur.role.name)
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch user roles", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch user roles", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get all available roles (admin only)
-  app.get("/api/rbac/roles", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/rbac/roles", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const roles = await storage.getRoles();
       res.json(roles);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch roles", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch roles", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get all available permissions (admin only)
-  app.get("/api/rbac/permissions", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/rbac/permissions", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const permissions = await storage.getPermissions();
       const permissionsByCategory = permissions.reduce((acc, permission) => {
@@ -590,14 +600,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         permissions,
         byCategory: permissionsByCategory,
         categories: Object.keys(permissionsByCategory)
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch permissions", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch permissions", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get all users with their roles (admin only)
-  app.get("/api/rbac/users", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/rbac/users", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       // Note: This is a simplified implementation for security verification
       // In production, consider pagination and field filtering
@@ -614,7 +624,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           note: "For production use, implement getAllUsersWithRoles in storage layer",
           adminAccess: true,
           timestamp: new Date().toISOString()
-        });
+        }));
       }
       
       await RBACService.logAuditEvent({
@@ -626,14 +636,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { accessedBy: req.user!.id },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch users", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch users", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Assign role to user (admin only)
-  app.post("/api/rbac/assign-role", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/rbac/assign-role", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const { userId, roleId } = roleAssignmentSchema.parse(req.body);
       
@@ -648,16 +658,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { roleId, assignedBy: req.user!.id },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
-      res.json({ message: "Role assigned successfully", userRole });
+      res.json({ message: "Role assigned successfully", userRole }));
     } catch (error) {
-      res.status(400).json({ message: "Failed to assign role", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to assign role", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Revoke role from user (admin only)
-  app.delete("/api/rbac/revoke-role", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.delete("/api/rbac/revoke-role", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const { userId, roleId } = roleRevocationSchema.parse(req.body);
       
@@ -673,19 +683,19 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           newValue: null,
           ipAddress: req.ip,
           userAgent: req.get("User-Agent") || null,
-        });
+        }));
 
-        res.json({ message: "Role revoked successfully" });
+        res.json({ message: "Role revoked successfully" }));
       } else {
-        res.status(404).json({ message: "Role assignment not found" });
+        res.status(404).json({ message: "Role assignment not found" }));
       }
     } catch (error) {
-      res.status(400).json({ message: "Failed to revoke role", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to revoke role", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Check specific permission (authenticated users)
-  app.post("/api/rbac/check-permission", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/rbac/check-permission", authenticateToken, asAuth(async (req, res) => {
     try {
       const { resource, action } = req.body;
       
@@ -695,14 +705,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         hasPermission,
         permission: `${resource}.${action}`,
         userId: req.user!.id
-      });
+      }));
     } catch (error) {
-      res.status(400).json({ message: "Failed to check permission", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to check permission", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get audit logs (admin only)
-  app.get("/api/rbac/audit-logs", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/rbac/audit-logs", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const { userId, limit } = req.query;
       const auditLogs = await storage.getAuditLogs(
@@ -712,12 +722,12 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       res.json(auditLogs);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch audit logs", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch audit logs", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Create new role (admin only)
-  app.post("/api/rbac/roles", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/rbac/roles", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const roleData = insertRoleSchema.parse(req.body);
       const newRole = await storage.createRole(roleData);
@@ -731,16 +741,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: roleData,
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.status(201).json(newRole);
     } catch (error) {
-      res.status(400).json({ message: "Failed to create role", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to create role", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Update role (admin only)
-  app.put("/api/rbac/roles/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/rbac/roles/:id", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       const updates = updateRoleSchema.parse(req.body);
@@ -758,47 +768,47 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           newValue: updates,
           ipAddress: req.ip,
           userAgent: req.get("User-Agent") || null,
-        });
+        }));
 
         res.json(updatedRole);
       } else {
-        res.status(404).json({ message: "Role not found" });
+        res.status(404).json({ message: "Role not found" }));
       }
     } catch (error) {
-      res.status(400).json({ message: "Failed to update role", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to update role", error: (error as Error).message }));
     }
-  });
+  }));
 
   // ===== ORGANIZATION MANAGEMENT API ROUTES =====
 
   // Get user's organizations
-  app.get("/api/organizations/my", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/organizations/my", authenticateToken, asAuth(async (req, res) => {
     try {
       const organizations = await storage.getUserOrganizations(req.user!.id);
       res.json(organizations);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch organizations", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch organizations", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get all organizations (admin only)
-  app.get("/api/organizations", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/organizations", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const organizations = await storage.getOrganizations();
       res.json(organizations);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch organizations", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch organizations", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get specific organization
-  app.get("/api/organizations/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/organizations/:id", authenticateToken, asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       const organization = await storage.getOrganization(id);
       
       if (!organization) {
-        return res.status(404).json({ message: "Organization not found" });
+        return res.status(404).json({ message: "Organization not found" }));
       }
 
       // Check if user is a member or admin
@@ -806,23 +816,23 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!member && !isAdmin) {
-        return res.status(403).json({ message: "Access denied" });
+        return res.status(403).json({ message: "Access denied" }));
       }
 
       const members = await storage.getOrganizationMembers(id);
-      res.json({ ...organization, members, memberCount: members.length });
+      res.json({ ...organization, members, memberCount: members.length }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch organization", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch organization", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Create organization
-  app.post("/api/organizations", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/organizations", authenticateToken, asAuth(async (req, res) => {
     try {
       const organizationData = insertOrganizationSchema.parse({
         ...req.body,
         createdBy: req.user!.id,
-      });
+      }));
       
       const newOrganization = await storage.createOrganization(organizationData);
       
@@ -835,23 +845,23 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: organizationData,
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.status(201).json(newOrganization);
     } catch (error) {
-      res.status(400).json({ message: "Failed to create organization", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to create organization", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Update organization (owner or admin only)
-  app.put("/api/organizations/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/organizations/:id", authenticateToken, asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       const updates = updateOrganizationSchema.parse(req.body);
       
       const organization = await storage.getOrganization(id);
       if (!organization) {
-        return res.status(404).json({ message: "Organization not found" });
+        return res.status(404).json({ message: "Organization not found" }));
       }
 
       // Check if user is owner or admin
@@ -859,7 +869,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
-        return res.status(403).json({ message: "Only organization owners or admins can update organizations" });
+        return res.status(403).json({ message: "Only organization owners or admins can update organizations" }));
       }
 
       const updatedOrganization = await storage.updateOrganization(id, updates);
@@ -873,22 +883,22 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: updates,
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.json(updatedOrganization);
     } catch (error) {
-      res.status(400).json({ message: "Failed to update organization", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to update organization", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Delete organization (owner or admin only)
-  app.delete("/api/organizations/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.delete("/api/organizations/:id", authenticateToken, asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       
       const organization = await storage.getOrganization(id);
       if (!organization) {
-        return res.status(404).json({ message: "Organization not found" });
+        return res.status(404).json({ message: "Organization not found" }));
       }
 
       // Check if user is owner or admin
@@ -896,7 +906,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
-        return res.status(403).json({ message: "Only organization owners or admins can delete organizations" });
+        return res.status(403).json({ message: "Only organization owners or admins can delete organizations" }));
       }
 
       const success = await storage.deleteOrganization(id);
@@ -911,19 +921,19 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           newValue: null,
           ipAddress: req.ip,
           userAgent: req.get("User-Agent") || null,
-        });
+        }));
 
-        res.json({ message: "Organization deleted successfully" });
+        res.json({ message: "Organization deleted successfully" }));
       } else {
-        res.status(500).json({ message: "Failed to delete organization" });
+        res.status(500).json({ message: "Failed to delete organization" }));
       }
     } catch (error) {
-      res.status(500).json({ message: "Failed to delete organization", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to delete organization", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get organization members
-  app.get("/api/organizations/:id/members", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/organizations/:id/members", authenticateToken, asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -932,32 +942,32 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!member && !isAdmin) {
-        return res.status(403).json({ message: "Access denied" });
+        return res.status(403).json({ message: "Access denied" }));
       }
 
       const members = await storage.getOrganizationMembers(id);
       res.json(members);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch organization members", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch organization members", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Add member to organization (owner or admin only)
-  app.post("/api/organizations/:id/members", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/organizations/:id/members", authenticateToken, asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       const memberData = insertOrganizationMemberSchema.parse({
         ...req.body,
         organizationId: id,
         invitedBy: req.user!.id,
-      });
+      }));
       
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(id, req.user!.id);
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
-        return res.status(403).json({ message: "Only organization owners or admins can add members" });
+        return res.status(403).json({ message: "Only organization owners or admins can add members" }));
       }
 
       const newMember = await storage.addOrganizationMember(memberData);
@@ -971,16 +981,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: memberData,
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.status(201).json(newMember);
     } catch (error) {
-      res.status(400).json({ message: "Failed to add organization member", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to add organization member", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Update organization member (owner or admin only)
-  app.put("/api/organizations/:orgId/members/:userId", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.put("/api/organizations/:orgId/members/:userId", authenticateToken, asAuth(async (req, res) => {
     try {
       const { orgId, userId } = req.params;
       const updates = updateOrganizationMemberSchema.parse(req.body);
@@ -990,7 +1000,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
-        return res.status(403).json({ message: "Only organization owners or admins can update members" });
+        return res.status(403).json({ message: "Only organization owners or admins can update members" }));
       }
 
       const existingMember = await storage.getOrganizationMember(orgId, userId);
@@ -1006,19 +1016,19 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           newValue: updates,
           ipAddress: req.ip,
           userAgent: req.get("User-Agent") || null,
-        });
+        }));
 
         res.json(updatedMember);
       } else {
-        res.status(404).json({ message: "Organization member not found" });
+        res.status(404).json({ message: "Organization member not found" }));
       }
     } catch (error) {
-      res.status(400).json({ message: "Failed to update organization member", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to update organization member", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Remove member from organization (owner or admin only)
-  app.delete("/api/organizations/:orgId/members/:userId", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.delete("/api/organizations/:orgId/members/:userId", authenticateToken, asAuth(async (req, res) => {
     try {
       const { orgId, userId } = req.params;
       
@@ -1027,7 +1037,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
-        return res.status(403).json({ message: "Only organization owners or admins can remove members" });
+        return res.status(403).json({ message: "Only organization owners or admins can remove members" }));
       }
 
       const existingMember = await storage.getOrganizationMember(orgId, userId);
@@ -1043,19 +1053,19 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           newValue: null,
           ipAddress: req.ip,
           userAgent: req.get("User-Agent") || null,
-        });
+        }));
 
-        res.json({ message: "Organization member removed successfully" });
+        res.json({ message: "Organization member removed successfully" }));
       } else {
-        res.status(404).json({ message: "Organization member not found" });
+        res.status(404).json({ message: "Organization member not found" }));
       }
     } catch (error) {
-      res.status(500).json({ message: "Failed to remove organization member", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to remove organization member", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get organization roles
-  app.get("/api/organizations/:id/roles", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/organizations/:id/roles", authenticateToken, asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -1064,31 +1074,31 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!member && !isAdmin) {
-        return res.status(403).json({ message: "Access denied" });
+        return res.status(403).json({ message: "Access denied" }));
       }
 
       const roles = await storage.getOrganizationRoles(id);
       res.json(roles);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch organization roles", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch organization roles", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Assign role to user in organization (owner or admin only)
-  app.post("/api/organizations/:orgId/assign-role", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.post("/api/organizations/:orgId/assign-role", authenticateToken, asAuth(async (req, res) => {
     try {
       const { orgId } = req.params;
       const { userId, roleId } = organizationRoleAssignmentSchema.parse({
         ...req.body,
         organizationId: orgId,
-      });
+      }));
       
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(orgId, req.user!.id);
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
-        return res.status(403).json({ message: "Only organization owners or admins can assign roles" });
+        return res.status(403).json({ message: "Only organization owners or admins can assign roles" }));
       }
 
       const userRole = await storage.assignRoleToUserInOrganization(userId, roleId, orgId, req.user!.id);
@@ -1102,29 +1112,29 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { userId, roleId, organizationId: orgId, assignedBy: req.user!.id },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
-      res.json({ message: "Role assigned successfully", userRole });
+      res.json({ message: "Role assigned successfully", userRole }));
     } catch (error) {
-      res.status(400).json({ message: "Failed to assign role", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to assign role", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Revoke role from user in organization (owner or admin only)
-  app.delete("/api/organizations/:orgId/revoke-role", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.delete("/api/organizations/:orgId/revoke-role", authenticateToken, asAuth(async (req, res) => {
     try {
       const { orgId } = req.params;
       const { userId, roleId } = organizationRoleAssignmentSchema.parse({
         ...req.body,
         organizationId: orgId,
-      });
+      }));
       
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(orgId, req.user!.id);
       const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
-        return res.status(403).json({ message: "Only organization owners or admins can revoke roles" });
+        return res.status(403).json({ message: "Only organization owners or admins can revoke roles" }));
       }
 
       const success = await storage.revokeRoleFromUserInOrganization(userId, roleId, orgId);
@@ -1139,19 +1149,19 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           newValue: null,
           ipAddress: req.ip,
           userAgent: req.get("User-Agent") || null,
-        });
+        }));
 
-        res.json({ message: "Role revoked successfully" });
+        res.json({ message: "Role revoked successfully" }));
       } else {
-        res.status(404).json({ message: "Role assignment not found" });
+        res.status(404).json({ message: "Role assignment not found" }));
       }
     } catch (error) {
-      res.status(400).json({ message: "Failed to revoke role", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to revoke role", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Get user roles in organization
-  app.get("/api/organizations/:orgId/users/:userId/roles", authenticateToken, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/organizations/:orgId/users/:userId/roles", authenticateToken, asAuth(async (req, res) => {
     try {
       const { orgId, userId } = req.params;
       
@@ -1161,20 +1171,20 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const isSameUser = req.user!.id === userId;
       
       if (!member && !isAdmin && !isSameUser) {
-        return res.status(403).json({ message: "Access denied" });
+        return res.status(403).json({ message: "Access denied" }));
       }
 
       const userRoles = await storage.getUserRolesInOrganization(userId, orgId);
       res.json(userRoles);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch user roles", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch user roles", error: (error as Error).message }));
     }
-  });
+  }));
 
   // ===== ADMIN DASHBOARD API ROUTES =====
   
   // Admin Dashboard Overview - System statistics and health
-  app.get("/api/admin/dashboard/stats", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  app.get("/api/admin/dashboard/stats", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
       const [systemStats, recentActivity] = await Promise.all([
         storage.getSystemStats(),
@@ -1190,17 +1200,17 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { timestamp: new Date().toISOString() },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.json({
         stats: systemStats,
         recentActivity: recentActivity.slice(0, 5), // Latest 5 activities for dashboard
         timestamp: new Date().toISOString()
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch dashboard stats", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch dashboard stats", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Enhanced User Management - Search, filter, and comprehensive user data
   app.get("/api/admin/users", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1243,18 +1253,18 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.json({
         users: usersWithStats,
         total: users.length,
         offset: parseInt(offset as string),
         limit: parseInt(limit as string)
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch users", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch users", error: (error as Error).message }));
     }
-  });
+  }));
 
   // User Details with full role and permission information
   app.get("/api/admin/users/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1268,7 +1278,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       ]);
 
       if (!user) {
-        return res.status(404).json({ message: "User not found" });
+        return res.status(404).json({ message: "User not found" }));
       }
 
       await RBACService.logAuditEvent({
@@ -1280,7 +1290,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { accessedUser: id },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.json({
         ...user,
@@ -1288,11 +1298,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         roles: userWithRoles?.userRoles || [],
         permissions: userWithRoles?.permissions || [],
         stats: userStats
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch user details", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch user details", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Create new user (admin only)
   app.post("/api/admin/users", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1302,7 +1312,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // Check if user exists
       const existingUser = await storage.getUserByEmail(userData.email);
       if (existingUser) {
-        return res.status(400).json({ message: "User already exists" });
+        return res.status(400).json({ message: "User already exists" }));
       }
 
       // Hash password if provided
@@ -1315,7 +1325,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         ...userData,
         password: hashedPassword,
         authProvider: userData.authProvider || "local"
-      });
+      }));
 
       await RBACService.logAuditEvent({
         userId: req.user!.id,
@@ -1326,16 +1336,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { ...userData, password: userData.password ? "[REDACTED]" : null },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.status(201).json({
         ...user,
         password: undefined // Never expose passwords
-      });
+      }));
     } catch (error) {
-      res.status(400).json({ message: "Failed to create user", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to create user", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Update user (admin only)
   app.put("/api/admin/users/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1345,7 +1355,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       const existingUser = await storage.getUser(id);
       if (!existingUser) {
-        return res.status(404).json({ message: "User not found" });
+        return res.status(404).json({ message: "User not found" }));
       }
 
       // Hash password if being updated
@@ -1364,16 +1374,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { ...updates, password: updates.password ? "[REDACTED]" : undefined },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.json({
         ...updatedUser,
         password: undefined // Never expose passwords
-      });
+      }));
     } catch (error) {
-      res.status(400).json({ message: "Failed to update user", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to update user", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Permission Matrix - Visual representation of role-permission relationships
   app.get("/api/admin/roles/matrix", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1393,18 +1403,18 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { timestamp: new Date().toISOString() },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.json({
         matrix: permissionMatrix,
         permissions: allPermissions,
         roles: allRoles,
         categories: [...new Set(allPermissions.map(p => p.category))]
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch permission matrix", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch permission matrix", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Enhanced Audit Logs with filtering and real-time capabilities
   app.get("/api/admin/audit-logs/enhanced", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1456,11 +1466,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         offset: parseInt(offset as string),
         limit: parseInt(limit as string),
         filters: { userId, action, resource, startDate, endDate }
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch enhanced audit logs", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch enhanced audit logs", error: (error as Error).message }));
     }
-  });
+  }));
 
   // System Health Monitoring
   app.get("/api/admin/system/health", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1506,7 +1516,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { responseTime: totalResponseTime },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.json(healthData);
     } catch (error) {
@@ -1515,9 +1525,9 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         error: (error as Error).message,
         database: { status: "error", responseTime: -1 },
         api: { status: "error", responseTime: -1 }
-      });
+      }));
     }
-  });
+  }));
 
   // System Settings Management
   app.get("/api/admin/settings", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1560,9 +1570,9 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
       res.json(settings);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch system settings", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch system settings", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Update system settings
   app.put("/api/admin/settings", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1581,17 +1591,17 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: settings,
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       res.json({ 
         message: "Settings updated successfully",
         category,
         timestamp: new Date().toISOString()
-      });
+      }));
     } catch (error) {
-      res.status(400).json({ message: "Failed to update settings", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to update settings", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Real-time activity stream
   app.get("/api/admin/activity/stream", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1603,11 +1613,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.json({
         activities: recentActivity,
         timestamp: new Date().toISOString()
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch activity stream", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch activity stream", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Export system data
   app.get("/api/admin/export/:type", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1632,7 +1642,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           filename = `roles_export_${new Date().toISOString().split('T')[0]}`;
           break;
         default:
-          return res.status(400).json({ message: "Invalid export type" });
+          return res.status(400).json({ message: "Invalid export type" }));
       }
 
       await RBACService.logAuditEvent({
@@ -1644,7 +1654,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         newValue: { type, format, recordCount: Array.isArray(data) ? data.length : 1 },
         ipAddress: req.ip,
         userAgent: req.get("User-Agent") || null,
-      });
+      }));
 
       // Set appropriate headers for download
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.${format}"`);
@@ -1654,17 +1664,17 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         res.json(data);
       } else {
         // For CSV, you'd implement CSV conversion here
-        res.json({ message: "CSV export not implemented yet", data });
+        res.json({ message: "CSV export not implemented yet", data }));
       }
     } catch (error) {
-      res.status(500).json({ message: "Failed to export data", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to export data", error: (error as Error).message }));
     }
-  });
+  }));
 
   // ===== END ADMIN DASHBOARD API ROUTES =====
 
   // KPI routes
-  app.get("/api/kpis", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
+  app.get("/api/kpis", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
     try {
       const kpis = await storage.getKpiConfigurations(req.user.id);
       const kpisWithData = await Promise.all(
@@ -1675,57 +1685,57 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       );
       res.json(kpisWithData);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch KPIs", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch KPIs", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/kpis", authenticateToken, requirePermission("kpis", "create"), async (req: any, res) => {
+  app.post("/api/kpis", authenticateToken, requirePermission("kpis", "create"), asAuth(async (req, res) => {
     try {
       const kpiData = insertKpiConfigurationSchema.parse({
         ...req.body,
         userId: req.user.id
-      });
+      }));
       
       const kpi = await storage.createKpiConfiguration(kpiData);
       res.json(kpi);
     } catch (error) {
-      res.status(400).json({ message: "Failed to create KPI", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to create KPI", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.put("/api/kpis/:id", authenticateToken, requirePermission("kpis", "update"), async (req: any, res) => {
+  app.put("/api/kpis/:id", authenticateToken, requirePermission("kpis", "update"), asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       const updates = req.body;
       
       const kpi = await storage.updateKpiConfiguration(id, updates);
       if (!kpi) {
-        return res.status(404).json({ message: "KPI not found" });
+        return res.status(404).json({ message: "KPI not found" }));
       }
       
       res.json(kpi);
     } catch (error) {
-      res.status(400).json({ message: "Failed to update KPI", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to update KPI", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.delete("/api/kpis/:id", authenticateToken, requirePermission("kpis", "delete"), async (req: any, res) => {
+  app.delete("/api/kpis/:id", authenticateToken, requirePermission("kpis", "delete"), asAuth(async (req, res) => {
     try {
       const { id } = req.params;
       const success = await storage.deleteKpiConfiguration(id);
       
       if (!success) {
-        return res.status(404).json({ message: "KPI not found" });
+        return res.status(404).json({ message: "KPI not found" }));
       }
       
-      res.json({ message: "KPI deleted successfully" });
+      res.json({ message: "KPI deleted successfully" }));
     } catch (error) {
-      res.status(400).json({ message: "Failed to delete KPI", error: (error as Error).message });
+      res.status(400).json({ message: "Failed to delete KPI", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Email routes
-  app.get("/api/email/providers", authenticateToken, requirePermission("email", "manage"), async (req: any, res) => {
+  app.get("/api/email/providers", authenticateToken, requirePermission("email", "manage"), asAuth(async (req, res) => {
     try {
       const configurations = await emailService.getEmailConfigurations(req.user.id);
       
@@ -1738,13 +1748,13 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         connectionStatus: {
           outlook: outlookStatus
         }
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch email providers", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch email providers", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.get("/api/email/status", authenticateToken, requirePermission("email", "manage"), async (req: any, res) => {
+  app.get("/api/email/status", authenticateToken, requirePermission("email", "manage"), asAuth(async (req, res) => {
     try {
       const outlookStatus = await emailService.checkOutlookConnection();
       const configurations = await emailService.getEmailConfigurations(req.user.id);
@@ -1756,13 +1766,13 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           isConnected: !!gmailConfig,
           email: gmailConfig?.email
         }
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to check email status", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to check email status", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/email/connect/:provider", authenticateToken, requirePermission("email", "manage"), async (req: any, res) => {
+  app.post("/api/email/connect/:provider", authenticateToken, requirePermission("email", "manage"), asAuth(async (req, res) => {
     try {
       // Validate provider parameter with Zod
       const { provider } = emailProviderParamsSchema.parse(req.params);
@@ -1779,7 +1789,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         return res.status(429).json({ 
           message: "Too many connection attempts. Please wait before trying again.",
           retryAfter: 300 // 5 minutes
-        });
+        }));
       }
       
       if (provider === 'outlook') {
@@ -1791,7 +1801,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
               message: "Outlook is already connected via Replit connector",
               isConnected: true,
               email: outlookStatus.email
-            });
+            }));
           }
         } catch (error) {
           // Replit connector not available, fall through to OAuth
@@ -1805,7 +1815,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         // Audit log the OAuth attempt
         console.log(`Outlook OAuth initiated for user ${req.user.id} at ${new Date().toISOString()}`);
         
-        res.json({ authUrl });
+        res.json({ authUrl }));
       } else if (provider === 'gmail') {
         const redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/email/callback`;
         const authUrl = await emailService.initiateEmailOAuth(provider, req.user.id, redirectUri);
@@ -1813,7 +1823,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         // Audit log the OAuth attempt
         console.log(`OAuth initiated for user ${req.user.id} with provider ${provider} at ${new Date().toISOString()}`);
         
-        res.json({ authUrl });
+        res.json({ authUrl }));
       } else if (provider === 'smtp') {
         // Validate SMTP configuration data with Zod (fixes Boolean parsing vulnerability)
         const smtpConfig = smtpConfigRequestSchema.parse(req.body);
@@ -1841,7 +1851,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         res.json({ 
           message: "SMTP configuration saved successfully",
           isConnected: true 
-        });
+        }));
       }
     } catch (error) {
       console.error('Email provider connection error:', error);
@@ -1852,7 +1862,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           message: "Invalid input data",
           errors: (error as any).errors,
           type: "validation_error"
-        });
+        }));
       }
       
       // Handle encryption errors
@@ -1860,34 +1870,34 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         return res.status(500).json({
           message: "Security configuration error. Please contact support.",
           type: "encryption_error"
-        });
+        }));
       }
       
       res.status(400).json({ 
         message: "Failed to connect email provider", 
         error: (error as Error).message,
         type: "connection_error"
-      });
+      }));
     }
-  });
+  }));
 
   app.get("/api/email/callback", async (req, res) => {
     try {
       const { code, state } = req.query;
       
       if (!code || !state) {
-        return res.status(400).json({ message: "Missing code or state parameter" });
+        return res.status(400).json({ message: "Missing code or state parameter" }));
       }
 
       const config = await emailService.handleEmailOAuthCallback(code as string, state as string);
       
       res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard?email_connected=${config.provider}`);
     } catch (error) {
-      res.status(400).json({ message: "Email OAuth callback failed", error: (error as Error).message });
+      res.status(400).json({ message: "Email OAuth callback failed", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/email/send", authenticateToken, requirePermission("email", "send"), async (req: any, res) => {
+  app.post("/api/email/send", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
     try {
       // Secure input validation with Zod schemas
       const emailRequest = emailSendRequestSchema.parse(req.body);
@@ -1904,7 +1914,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           retryAfter: 60,
           limit: 10,
           windowMs: 60000
-        });
+        }));
       }
       
       recentSends.push(now);
@@ -1928,9 +1938,9 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       );
       
       if (success) {
-        res.json({ message: "Email sent successfully" });
+        res.json({ message: "Email sent successfully" }));
       } else {
-        res.status(500).json({ message: "Failed to send email" });
+        res.status(500).json({ message: "Failed to send email" }));
       }
     } catch (error) {
       console.error('Email send error:', error);
@@ -1941,7 +1951,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           message: "Invalid email data",
           errors: (error as any).errors,
           type: "validation_error"
-        });
+        }));
       }
       
       // Handle authentication errors
@@ -1949,7 +1959,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         return res.status(401).json({
           message: "Email provider authentication failed. Please reconnect your email account.",
           type: "auth_error"
-        });
+        }));
       }
       
       // Handle rate limiting errors
@@ -1957,36 +1967,36 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         return res.status(429).json({
           message: "Too many email requests. Please try again later.",
           type: "rate_limit_error"
-        });
+        }));
       }
       
       res.status(500).json({ 
         message: "Failed to send email", 
         error: (error as Error).message,
         type: "send_error"
-      });
+      }));
     }
-  });
+  }));
 
   // Email templates endpoint for better API design
-  app.get("/api/email/templates", authenticateToken, requirePermission("email", "send"), async (req: any, res) => {
+  app.get("/api/email/templates", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
     try {
       const templates = emailService.getEmailTemplates();
       res.json({ 
         templates,
         count: Object.keys(templates).length,
         available: Object.keys(templates)
-      });
+      }));
     } catch (error) {
       res.status(500).json({ 
         message: "Failed to fetch email templates", 
         error: (error as Error).message 
-      });
+      }));
     }
-  });
+  }));
 
   // ChatGPT routes (Legacy - creates default conversation)
-  app.post("/api/chat/query", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.post("/api/chat/query", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const { query } = req.body;
       
@@ -1999,7 +2009,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           title: "Default Chat",
           description: "Legacy chat conversation",
           isFavorite: false
-        });
+        }));
       } else {
         defaultConversation = conversations[0];
       }
@@ -2014,7 +2024,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           query,
           erpData,
           userId: req.user.id
-        });
+        }));
       } catch (aiError) {
         console.error('AI analysis failed:', aiError);
         response = {
@@ -2035,7 +2045,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         insights: response.insights || [],
         recommendations: response.recommendations || [],
         dataUsed: response.dataUsed || []
-      });
+      }));
       
       // Broadcast to WebSocket clients (with permission check)
       const wsClient = wsClients.get(req.user.id);
@@ -2048,78 +2058,78 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       res.json(response);
     } catch (error) {
-      res.status(500).json({ message: "Failed to process query", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to process query", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.get("/api/chat/history", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.get("/api/chat/history", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const history = await storage.getChatHistory(req.user.id);
       res.json(history);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch chat history", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch chat history", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Conversation Management Routes
-  app.get("/api/conversations", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.get("/api/conversations", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string) || 50;
       const conversations = await storage.getConversations(req.user.id, limit);
       res.json(conversations);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch conversations", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch conversations", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.get("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.get("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const conversation = await storage.getConversation(req.params.id);
       if (!conversation) {
-        return res.status(404).json({ message: "Conversation not found" });
+        return res.status(404).json({ message: "Conversation not found" }));
       }
       
       // Check if user owns this conversation
       if (conversation.userId !== req.user.id) {
-        return res.status(403).json({ message: "Access denied" });
+        return res.status(403).json({ message: "Access denied" }));
       }
 
       const messages = await storage.getChatHistoryByConversation(conversation.id);
-      res.json({ ...conversation, messages });
+      res.json({ ...conversation, messages }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch conversation", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch conversation", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/conversations", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.post("/api/conversations", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const { title, description } = req.body;
       if (!title) {
-        return res.status(400).json({ message: "Conversation title is required" });
+        return res.status(400).json({ message: "Conversation title is required" }));
       }
 
       const conversation = await storage.createConversation({
         userId: req.user.id,
         title: title.slice(0, 100), // Limit title length
         description: description?.slice(0, 500) // Limit description length
-      });
+      }));
 
       res.json(conversation);
     } catch (error) {
-      res.status(500).json({ message: "Failed to create conversation", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to create conversation", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.put("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.put("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const conversation = await storage.getConversation(req.params.id);
       if (!conversation) {
-        return res.status(404).json({ message: "Conversation not found" });
+        return res.status(404).json({ message: "Conversation not found" }));
       }
       
       // Check if user owns this conversation
       if (conversation.userId !== req.user.id) {
-        return res.status(403).json({ message: "Access denied" });
+        return res.status(403).json({ message: "Access denied" }));
       }
 
       const { title, description, isFavorite } = req.body;
@@ -2132,35 +2142,35 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const updatedConversation = await storage.updateConversation(req.params.id, updates);
       res.json(updatedConversation);
     } catch (error) {
-      res.status(500).json({ message: "Failed to update conversation", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to update conversation", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.delete("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.delete("/api/conversations/:id", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const conversation = await storage.getConversation(req.params.id);
       if (!conversation) {
-        return res.status(404).json({ message: "Conversation not found" });
+        return res.status(404).json({ message: "Conversation not found" }));
       }
       
       // Check if user owns this conversation
       if (conversation.userId !== req.user.id) {
-        return res.status(403).json({ message: "Access denied" });
+        return res.status(403).json({ message: "Access denied" }));
       }
 
       const deleted = await storage.deleteConversation(req.params.id);
       if (deleted) {
-        res.json({ message: "Conversation deleted successfully" });
+        res.json({ message: "Conversation deleted successfully" }));
       } else {
-        res.status(500).json({ message: "Failed to delete conversation" });
+        res.status(500).json({ message: "Failed to delete conversation" }));
       }
     } catch (error) {
-      res.status(500).json({ message: "Failed to delete conversation", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to delete conversation", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Enhanced Chat with Conversation Support
-  app.post("/api/chat/conversations/:id/message", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.post("/api/chat/conversations/:id/message", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const { query } = req.body;
       const conversationId = req.params.id;
@@ -2168,7 +2178,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // Verify conversation ownership
       const conversation = await storage.getConversation(conversationId);
       if (!conversation || conversation.userId !== req.user.id) {
-        return res.status(404).json({ message: "Conversation not found or access denied" });
+        return res.status(404).json({ message: "Conversation not found or access denied" }));
       }
 
       // Get conversation context
@@ -2185,7 +2195,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           query,
           erpData,
           userId: req.user.id
-        });
+        }));
       } catch (aiError) {
         console.error('AI analysis failed:', aiError);
         response = {
@@ -2208,13 +2218,13 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         dataUsed: response.dataUsed,
         erpData,
         responseTime
-      });
+      }));
 
       // Update conversation metadata
       await storage.updateConversation(conversationId, {
         lastMessageAt: new Date(),
         messageCount: conversation.messageCount + 1
-      });
+      }));
 
       // Broadcast to WebSocket clients (with permission check)
       const wsClient = wsClients.get(req.user.id);
@@ -2228,12 +2238,12 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       res.json(response);
     } catch (error) {
-      res.status(500).json({ message: "Failed to process message", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to process message", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Query Templates Routes
-  app.get("/api/query-templates", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.get("/api/query-templates", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const category = req.query.category as string;
       const systemTemplates = await storage.getQueryTemplates(category);
@@ -2242,18 +2252,18 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.json({
         system: systemTemplates,
         user: userTemplates
-      });
+      }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch query templates", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch query templates", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/query-templates", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.post("/api/query-templates", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const { name, description, query, category, icon } = req.body;
       
       if (!name || !query || !category) {
-        return res.status(400).json({ message: "Name, query, and category are required" });
+        return res.status(400).json({ message: "Name, query, and category are required" }));
       }
 
       const template = await storage.createQueryTemplate({
@@ -2264,40 +2274,40 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         icon: icon || "fas fa-question-circle",
         isSystem: false,
         userId: req.user.id
-      });
+      }));
 
       res.json(template);
     } catch (error) {
-      res.status(500).json({ message: "Failed to create query template", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to create query template", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/query-templates/:id/use", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.post("/api/query-templates/:id/use", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       await storage.updateQueryTemplateUsage(req.params.id);
-      res.json({ success: true });
+      res.json({ success: true }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to update template usage", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to update template usage", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Favorite Queries Routes
-  app.get("/api/favorite-queries", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.get("/api/favorite-queries", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const category = req.query.category as string;
       const favorites = await storage.getFavoriteQueries(req.user.id, category);
       res.json(favorites);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch favorite queries", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch favorite queries", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/favorite-queries", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.post("/api/favorite-queries", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const { query, title, description, category } = req.body;
       
       if (!query || !title || !category) {
-        return res.status(400).json({ message: "Query, title, and category are required" });
+        return res.status(400).json({ message: "Query, title, and category are required" }));
       }
 
       const favorite = await storage.createFavoriteQuery({
@@ -2306,38 +2316,38 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         title: title.slice(0, 100),
         description: description?.slice(0, 500),
         category: category.slice(0, 50)
-      });
+      }));
 
       res.json(favorite);
     } catch (error) {
-      res.status(500).json({ message: "Failed to save favorite query", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to save favorite query", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.delete("/api/favorite-queries/:id", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.delete("/api/favorite-queries/:id", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       const deleted = await storage.deleteFavoriteQuery(req.params.id);
       if (deleted) {
-        res.json({ message: "Favorite query deleted successfully" });
+        res.json({ message: "Favorite query deleted successfully" }));
       } else {
-        res.status(404).json({ message: "Favorite query not found" });
+        res.status(404).json({ message: "Favorite query not found" }));
       }
     } catch (error) {
-      res.status(500).json({ message: "Failed to delete favorite query", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to delete favorite query", error: (error as Error).message }));
     }
-  });
+  }));
 
-  app.post("/api/favorite-queries/:id/use", authenticateToken, requirePermission("ai", "basic"), async (req: any, res) => {
+  app.post("/api/favorite-queries/:id/use", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
       await storage.updateFavoriteQueryUsage(req.params.id);
-      res.json({ success: true });
+      res.json({ success: true }));
     } catch (error) {
-      res.status(500).json({ message: "Failed to update favorite usage", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to update favorite usage", error: (error as Error).message }));
     }
-  });
+  }));
 
   // KPI Insights route
-  app.get("/api/insights", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
+  app.get("/api/insights", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
     try {
       const kpis = await storage.getKpiConfigurations(req.user.id);
       const kpiData: Record<string, any> = {};
@@ -2356,14 +2366,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const insights = await generateKPIInsights(kpiData);
       res.json(insights);
     } catch (error) {
-      res.status(500).json({ message: "Failed to generate insights", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to generate insights", error: (error as Error).message }));
     }
-  });
+  }));
 
   // ===== ANALYTICS API ROUTES =====
   
   // Analytics Overview - Comprehensive business intelligence dashboard
-  app.get("/api/analytics/overview", authenticateToken, requirePermission("analytics", "read"), async (req: any, res) => {
+  app.get("/api/analytics/overview", authenticateToken, requirePermission("analytics", "read"), asAuth(async (req, res) => {
     try {
       const userId = req.user.id;
       
@@ -2411,15 +2421,15 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           lastSync: s.lastSync
         })),
         lastUpdated: new Date().toISOString()
-      });
+      }));
     } catch (error) {
       console.error("Analytics overview error:", error);
-      res.status(500).json({ message: "Failed to fetch analytics overview", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch analytics overview", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Revenue Analytics - Financial performance and trends
-  app.get("/api/analytics/revenue", authenticateToken, requirePermission("analytics", "read"), async (req: any, res) => {
+  app.get("/api/analytics/revenue", authenticateToken, requirePermission("analytics", "read"), asAuth(async (req, res) => {
     try {
       const userId = req.user.id;
       const { period = "12m", granularity = "month" } = req.query;
@@ -2446,7 +2456,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
             revenue: Math.round(baseRevenue * seasonality * growth * randomVariation),
             target: Math.round(baseRevenue * growth * 1.1),
             previousYear: Math.round(baseRevenue * seasonality * Math.pow(1.15, -12) * randomVariation)
-          });
+          }));
         }
         return data;
       };
@@ -2472,15 +2482,15 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           averageMonthlyRevenue: Math.round(totalRevenue / periodMonths)
         },
         lastUpdated: new Date().toISOString()
-      });
+      }));
     } catch (error) {
       console.error("Revenue analytics error:", error);
-      res.status(500).json({ message: "Failed to fetch revenue analytics", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch revenue analytics", error: (error as Error).message }));
     }
-  });
+  }));
 
   // ERP Performance Analytics - System health and operational metrics
-  app.get("/api/analytics/erp-performance", authenticateToken, requirePermission("analytics", "read"), async (req: any, res) => {
+  app.get("/api/analytics/erp-performance", authenticateToken, requirePermission("analytics", "read"), asAuth(async (req, res) => {
     try {
       const userId = req.user.id;
       
@@ -2502,7 +2512,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           dataQuality: system.isConnected ? 92 + Math.random() * 6 : 0,
           issues: system.isConnected ? Math.floor(Math.random() * 3) : null
         };
-      });
+      }));
       
       // Overall system health
       const connectedSystems = systemPerformance.filter(s => s.isConnected);
@@ -2535,15 +2545,15 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         },
         dataSyncStatus,
         lastUpdated: new Date().toISOString()
-      });
+      }));
     } catch (error) {
       console.error("ERP performance analytics error:", error);
-      res.status(500).json({ message: "Failed to fetch ERP performance analytics", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to fetch ERP performance analytics", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Business Insights - AI-powered analytics and recommendations
-  app.get("/api/analytics/insights", authenticateToken, requirePermission("analytics", "advanced"), async (req: any, res) => {
+  app.get("/api/analytics/insights", authenticateToken, requirePermission("analytics", "advanced"), asAuth(async (req, res) => {
     try {
       const userId = req.user.id;
       
@@ -2570,7 +2580,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         ...kpiData,
         erpData,
         connectedSystems: erpSystems.filter(s => s.isConnected).length
-      });
+      }));
       
       // Add business-specific insights
       const businessInsights = [
@@ -2609,15 +2619,15 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           categories: ["financial", "operational", "performance"]
         },
         lastUpdated: new Date().toISOString()
-      });
+      }));
     } catch (error) {
       console.error("Business insights error:", error);
-      res.status(500).json({ message: "Failed to generate business insights", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to generate business insights", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Analytics Export - Data export functionality
-  app.get("/api/analytics/export", authenticateToken, requirePermission("analytics", "export"), async (req: any, res) => {
+  app.get("/api/analytics/export", authenticateToken, requirePermission("analytics", "export"), asAuth(async (req, res) => {
     try {
       const userId = req.user.id;
       const { type = "overview", format = "json", period = "12m" } = req.query;
@@ -2671,19 +2681,19 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           exportType: type,
           timestamp: new Date().toISOString(),
           data: exportData
-        });
+        }));
       } else {
         // Simple CSV export (in real implementation, would be more sophisticated)
         res.send("Export format CSV not fully implemented in demo");
       }
     } catch (error) {
       console.error("Analytics export error:", error);
-      res.status(500).json({ message: "Failed to export analytics data", error: (error as Error).message });
+      res.status(500).json({ message: "Failed to export analytics data", error: (error as Error).message }));
     }
-  });
+  }));
 
   // Real-time polling endpoints for Lambda compatibility
-  app.get("/api/realtime/kpi-updates", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
+  app.get("/api/realtime/kpi-updates", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
     try {
       // Fetch latest KPI data (same logic as WebSocket implementation)
       const kpis = await storage.getKpiConfigurations(req.user.id);
@@ -2699,7 +2709,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
             value: latestData.value,
             change: latestData.change,
             timestamp: latestData.timestamp
-          });
+          }));
         }
       }
       
@@ -2707,16 +2717,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         type: 'kpi_update',
         data: kpiUpdates,
         timestamp: new Date().toISOString()
-      });
+      }));
     } catch (error) {
       res.status(500).json({ 
         message: "Failed to fetch KPI updates", 
         error: (error as Error).message 
-      });
+      }));
     }
-  });
+  }));
 
-  app.get("/api/realtime/erp-status", authenticateToken, requirePermission("erp_connections", "read"), async (req: any, res) => {
+  app.get("/api/realtime/erp-status", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
       // Fetch ERP systems status (same logic as WebSocket implementation)
       const systems = await erpService.getConnectedSystems(req.user.id);
@@ -2733,16 +2743,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         type: 'erp_status_update',
         data: erpSystems,
         timestamp: new Date().toISOString()
-      });
+      }));
     } catch (error) {
       res.status(500).json({ 
         message: "Failed to fetch ERP status", 
         error: (error as Error).message 
-      });
+      }));
     }
-  });
+  }));
 
-  app.get("/api/realtime/insights", authenticateToken, requirePermission("kpis", "read"), async (req: any, res) => {
+  app.get("/api/realtime/insights", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
     try {
       // Generate insights for real-time updates
       const kpis = await storage.getKpiConfigurations(req.user.id);
@@ -2769,20 +2779,20 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           trends: insights.trends || []
         },
         timestamp: new Date().toISOString()
-      });
+      }));
     } catch (error) {
       res.status(500).json({ 
         message: "Failed to generate insights", 
         error: (error as Error).message 
-      });
+      }));
     }
-  });
+  }));
 
   const httpServer = createServer(app);
 
   // WebSocket server setup (skip in Lambda environment)
   if (!options.excludeWebSocket) {
-    const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+    const wss = new WebSocketServer({ server: httpServer, path: '/ws' }));
 
     wss.on('connection', (ws, req) => {
       console.log('WebSocket client connected');
@@ -2803,7 +2813,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
                     ws, 
                     user,
                     permissions: userWithPermissions.permissions.map(p => `${p.resource}.${p.action}`)
-                  });
+                  }));
                   ws.send(JSON.stringify({ type: 'auth_success', userId: user.id }));
                 } else {
                   ws.send(JSON.stringify({ type: 'auth_error', message: 'Unable to load user permissions' }));
@@ -2816,7 +2826,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         } catch (error) {
           console.error('WebSocket message error:', error);
         }
-      });
+      }));
 
       ws.on('close', () => {
         // Remove client from tracking
@@ -2826,8 +2836,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
             break;
           }
         }
-      });
-    });
+      }));
+    }));
 
     // Real-time KPI updates with permission checks (simulate with interval)
     setInterval(async () => {
@@ -2853,7 +2863,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
                   value: latestData.value,
                   change: latestData.change,
                   timestamp: latestData.timestamp
-                });
+                }));
               }
             }
             
