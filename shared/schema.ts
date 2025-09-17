@@ -548,6 +548,7 @@ export const updateUserRoleSchema = insertUserRoleSchema.omit({
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertOAuthUser = z.infer<typeof insertOAuthUserSchema>;
 export type User = typeof users.$inferSelect;
+export type AuthUser = Pick<User, 'id' | 'username' | 'email' | 'role' | 'authProvider'>;
 export type InsertErpConnection = z.infer<typeof insertErpConnectionSchema>;
 export type ErpConnection = typeof erpConnections.$inferSelect;
 export type InsertKpiConfiguration = z.infer<typeof insertKpiConfigurationSchema>;
