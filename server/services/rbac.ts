@@ -1,9 +1,9 @@
 import { storage } from "../storage";
-import { User, UserWithRoles, Permission, Role, PermissionCheck, InsertAuditLog } from "@shared/schema";
+import { User, UserWithRoles, Permission, Role, PermissionCheck, InsertAuditLog, AuthUser } from "@shared/schema";
 import { Request, Response, NextFunction } from "express";
 
 export interface AuthenticatedRequest extends Request {
-  user?: User;
+  user?: AuthUser;
   userPermissions?: Permission[];
   userRoles?: Role[];
 }
