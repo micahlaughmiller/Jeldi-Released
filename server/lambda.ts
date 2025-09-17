@@ -85,6 +85,17 @@ app.use(express.static(publicPath, {
   }
 }));
 
+// Serve index.html for all non-API routes (SPA fallback)
+app.get('*', (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  // Skip for API routes
+  if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+    return next();
+  }
+  
+  const indexPath = path.join(publicPath, 'index.html');
+  res.sendFile(indexPath);
+});
+
 // Request logging middleware (without response body to prevent PII leakage)
 app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
   const start = Date.now();
@@ -115,15 +126,6 @@ async function initializeAppOnce() {
 
   initializationPromise = (async () => {
     try {
-      // Health check endpoint
-      app.get("/health", (req: express.Request, res: express.Response) => {
-        res.json({ 
-          status: "healthy", 
-          timestamp: new Date().toISOString(),
-          environment: process.env.NODE_ENV || "development"
-        });
-      });
-
       // Register routes but exclude WebSocket functionality
       const httpServer = await registerRoutes(app, { excludeWebSocket: true });
 
@@ -136,15 +138,13 @@ async function initializeAppOnce() {
         console.error(err);
       });
 
-      // Serve index.html for all non-API routes (SPA fallback) - MUST BE LAST
-      app.get('*', (req: express.Request, res: express.Response, next: express.NextFunction) => {
-        // Skip for API routes (should not happen since routes are registered above)
-        if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
-          return next();
-        }
-        
-        const indexPath = path.join(publicPath, 'index.html');
-        res.sendFile(indexPath);
+      // Health check endpoint
+      app.get("/health", (req: express.Request, res: express.Response) => {
+        res.json({ 
+          status: "healthy", 
+          timestamp: new Date().toISOString(),
+          environment: process.env.NODE_ENV || "development"
+        });
       });
 
       isInitialized = true;
