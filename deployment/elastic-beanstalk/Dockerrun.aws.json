@@ -1,0 +1,120 @@
+{
+  "AWSEBDockerrunVersion": 2,
+  "containerDefinitions": [
+    {
+      "name": "jeldi-app",
+      "image": "node:18-alpine",
+      "essential": true,
+      "memory": 512,
+      "portMappings": [
+        {
+          "hostPort": 5000,
+          "containerPort": 5000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "NODE_ENV",
+          "value": "production"
+        },
+        {
+          "name": "PORT",
+          "value": "5000"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/aws/elasticbeanstalk/jeldi-app/var/log/app",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "jeldi"
+        }
+      },
+      "mountPoints": [
+        {
+          "sourceVolume": "app-logs",
+          "containerPath": "/var/log/app",
+          "readOnly": false
+        }
+      ],
+      "workingDirectory": "/usr/src/app",
+      "command": [
+        "sh",
+        "-c",
+        "npm ci --production && npm run build && npm start"
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:5000/api/health || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    },
+    {
+      "name": "nginx",
+      "image": "nginx:alpine",
+      "essential": true,
+      "memory": 128,
+      "portMappings": [
+        {
+          "hostPort": 80,
+          "containerPort": 80,
+          "protocol": "tcp"
+        },
+        {
+          "hostPort": 443,
+          "containerPort": 443,
+          "protocol": "tcp"
+        }
+      ],
+      "links": [
+        "jeldi-app:backend"
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "nginx-config",
+          "containerPath": "/etc/nginx/conf.d",
+          "readOnly": true
+        },
+        {
+          "sourceVolume": "nginx-logs",
+          "containerPath": "/var/log/nginx",
+          "readOnly": false
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/aws/elasticbeanstalk/jeldi-app/nginx",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "nginx"
+        }
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "app-logs",
+      "host": {
+        "sourcePath": "/var/log/app"
+      }
+    },
+    {
+      "name": "nginx-config",
+      "host": {
+        "sourcePath": "/var/app/current/deployment/nginx"
+      }
+    },
+    {
+      "name": "nginx-logs",
+      "host": {
+        "sourcePath": "/var/log/nginx"
+      }
+    }
+  ]
+}

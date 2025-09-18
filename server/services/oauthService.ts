@@ -5,7 +5,7 @@ import { storage } from "../storage";
 import { InsertOAuthUser } from "@shared/schema";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { getJwtSecret } from "../env-validation";
+import { getJwtSecret, getSecureCallbackURL, detectEnvironment, validateOAuthCallbacks } from "../env-validation";
 
 // JWT_SECRET accessed at runtime, not import-time
 const getJwtSecretAtRuntime = () => getJwtSecret();
@@ -19,24 +19,44 @@ export interface OAuthProvider {
   scope: string[];
 }
 
-export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = {
-  google: {
-    name: "google",
-    displayName: "Google",
-    clientId: process.env.GOOGLE_CLIENT_ID || "",
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || "/api/auth/google/callback",
-    scope: ["profile", "email"]
-  },
-  microsoft: {
-    name: "microsoft",
-    displayName: "Microsoft",
-    clientId: process.env.MICROSOFT_CLIENT_ID || "",
-    clientSecret: process.env.MICROSOFT_CLIENT_SECRET || "",
-    callbackURL: process.env.MICROSOFT_CALLBACK_URL || "/api/auth/microsoft/callback",
-    scope: ["openid", "profile", "email", "offline_access", "User.Read"]
+function getCallbackURL(provider: string, defaultPath: string): string {
+  // Use enhanced secure callback URL function with logging and validation
+  return getSecureCallbackURL(provider, defaultPath);
+}
+
+// Initialize OAuth providers with enhanced callback URL handling
+function initializeOAuthProviders(): Record<string, OAuthProvider> {
+  // Validate OAuth callbacks before initializing providers
+  const validation = validateOAuthCallbacks();
+  if (!validation.isValid) {
+    console.error('OAuth callback validation failed:', validation.errors.join(', '));
+    // Continue but log warnings - don't fail startup
   }
-};
+  if (validation.warnings.length > 0) {
+    console.warn('OAuth callback warnings:', validation.warnings.join(', '));
+  }
+  
+  return {
+    google: {
+      name: "google",
+      displayName: "Google",
+      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+      callbackURL: getCallbackURL("google", "/api/auth/google/callback"),
+      scope: ["profile", "email"]
+    },
+    microsoft: {
+      name: "microsoft",
+      displayName: "Microsoft",
+      clientId: process.env.MICROSOFT_CLIENT_ID || "",
+      clientSecret: process.env.MICROSOFT_CLIENT_SECRET || "",
+      callbackURL: getCallbackURL("microsoft", "/api/auth/microsoft/callback"),
+      scope: ["openid", "profile", "email", "offline_access", "User.Read"]
+    }
+  };
+}
+
+export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = initializeOAuthProviders();
 
 export class OAuthService {
   static generateSecureState(): string {
@@ -82,8 +102,12 @@ export class OAuthService {
   }
 
   static setupStrategies() {
+    const env = detectEnvironment();
+    console.log(`Setting up OAuth strategies for ${env.platform} environment`);
+    
     // Google OAuth Strategy
     if (OAUTH_PROVIDERS.google.clientId && OAUTH_PROVIDERS.google.clientSecret) {
+      console.log(`Configuring Google OAuth with callback: ${OAUTH_PROVIDERS.google.callbackURL}`);
       passport.use(new GoogleStrategy({
         clientID: OAUTH_PROVIDERS.google.clientId,
         clientSecret: OAUTH_PROVIDERS.google.clientSecret,
@@ -94,19 +118,25 @@ export class OAuthService {
         try {
           const state = req.query?.state;
           if (!state) {
+            console.error('Google OAuth callback missing CSRF state parameter');
             return done(new Error("Missing CSRF state parameter"), null);
           }
           
           const result = await OAuthService.handleOAuthCallback("google", profile, accessToken, refreshToken, state);
+          console.log(`Google OAuth callback successful for user: ${profile.emails?.[0]?.value}`);
           return done(null, result);
         } catch (error) {
+          console.error('Google OAuth callback error:', error);
           return done(error, null);
         }
       }));
+    } else {
+      console.warn('Google OAuth not configured - missing client ID or secret');
     }
 
     // Microsoft OAuth Strategy
     if (OAUTH_PROVIDERS.microsoft.clientId && OAUTH_PROVIDERS.microsoft.clientSecret) {
+      console.log(`Configuring Microsoft OAuth with callback: ${OAUTH_PROVIDERS.microsoft.callbackURL}`);
       passport.use(new MicrosoftStrategy({
         clientID: OAUTH_PROVIDERS.microsoft.clientId,
         clientSecret: OAUTH_PROVIDERS.microsoft.clientSecret,
@@ -118,15 +148,20 @@ export class OAuthService {
         try {
           const state = req.query?.state;
           if (!state) {
+            console.error('Microsoft OAuth callback missing CSRF state parameter');
             return done(new Error("Missing CSRF state parameter"), null);
           }
           
           const result = await OAuthService.handleOAuthCallback("microsoft", profile, accessToken, refreshToken, state);
+          console.log(`Microsoft OAuth callback successful for user: ${profile.emails?.[0]?.value || profile.username}`);
           return done(null, result);
         } catch (error) {
+          console.error('Microsoft OAuth callback error:', error);
           return done(error, null);
         }
       }));
+    } else {
+      console.warn('Microsoft OAuth not configured - missing client ID or secret');
     }
 
     // Passport serialization
@@ -244,13 +279,64 @@ export class OAuthService {
   }
 
   static getAvailableProviders(): OAuthProvider[] {
-    return Object.values(OAUTH_PROVIDERS).filter(provider => 
+    const availableProviders = Object.values(OAUTH_PROVIDERS).filter(provider => 
       provider.clientId && provider.clientSecret
     );
+    
+    console.log(`Available OAuth providers: ${availableProviders.map(p => p.name).join(', ')}`);
+    return availableProviders;
   }
 
   static isProviderConfigured(provider: string): boolean {
     const config = OAUTH_PROVIDERS[provider];
-    return !!(config && config.clientId && config.clientSecret);
+    const isConfigured = !!(config && config.clientId && config.clientSecret);
+    
+    if (!isConfigured) {
+      console.warn(`OAuth provider '${provider}' is not properly configured`);
+    }
+    
+    return isConfigured;
+  }
+  
+  /**
+   * Validate callback URL against environment allowlist
+   */
+  static validateCallbackURL(callbackURL: string): boolean {
+    const env = detectEnvironment();
+    
+    // Check if callback URL is in allowed origins
+    const isAllowed = env.allowedOrigins.some(origin => {
+      if (origin.includes('*')) {
+        // Handle wildcard patterns
+        const pattern = origin.replace(/\*/g, '.*');
+        return new RegExp(pattern).test(callbackURL);
+      }
+      return callbackURL.startsWith(origin);
+    });
+    
+    if (!isAllowed) {
+      console.warn(`Callback URL '${callbackURL}' is not in allowed origins: ${env.allowedOrigins.join(', ')}`);
+    }
+    
+    return isAllowed;
+  }
+  
+  /**
+   * Get environment-specific OAuth configuration
+   */
+  static getEnvironmentConfig() {
+    const env = detectEnvironment();
+    const validation = validateOAuthCallbacks();
+    
+    return {
+      environment: env,
+      validation,
+      providers: Object.values(OAUTH_PROVIDERS).map(provider => ({
+        name: provider.name,
+        configured: this.isProviderConfigured(provider.name),
+        callbackURL: provider.callbackURL,
+        callbackURLValid: this.validateCallbackURL(provider.callbackURL)
+      }))
+    };
   }
 }

@@ -3,7 +3,7 @@ import type { EmailConfiguration } from "@shared/schema";
 import { getUncachableOutlookClient } from "./outlookClient";
 import crypto from "crypto";
 import { promisify } from "util";
-import { getTokenEncryptionKey } from "../env-validation";
+import { getTokenEncryptionKey, getSecureCallbackURL, detectEnvironment, validateDomainSecurity, getAllowedOrigins } from "../env-validation";
 
 export interface EmailProvider {
   name: string;
@@ -130,6 +130,64 @@ ERP Connect Pro`,
     variables: ["systems", "issues"]
   }
 };
+
+function getEmailOAuthRedirectUris(): string[] {
+  // Use enhanced environment detection for better multi-domain support
+  const env = detectEnvironment();
+  const redirectUris: string[] = [];
+  
+  // Add explicit EMAIL_OAUTH_REDIRECT_URI if set and secure
+  const explicitUri = process.env.EMAIL_OAUTH_REDIRECT_URI;
+  if (explicitUri) {
+    const validation = validateDomainSecurity(explicitUri, env.isProduction);
+    if (validation.isSecure) {
+      redirectUris.push(explicitUri);
+    } else {
+      console.warn(`EMAIL_OAUTH_REDIRECT_URI failed security validation: ${validation.errors.join(', ')}`);
+    }
+  }
+  
+  // Add environment-based allowed origins with email callback path
+  const allowedOrigins = getAllowedOrigins(env);
+  for (const origin of allowedOrigins) {
+    if (!origin.includes('*')) { // Skip wildcard patterns for specific URIs
+      const uri = `${origin.replace(/\/+$/, '')}/api/email/callback`;
+      const validation = validateDomainSecurity(uri, env.isProduction);
+      if (validation.isSecure || env.isDevelopment) {
+        redirectUris.push(uri);
+      }
+    }
+  }
+  
+  // Add secure callback URL from enhanced function
+  const secureCallback = getSecureCallbackURL('email', '/api/email/callback');
+  if (!redirectUris.includes(secureCallback)) {
+    redirectUris.push(secureCallback);
+  }
+  
+  // Remove duplicates and empty values
+  const uniqueUris = [...new Set(redirectUris.filter(Boolean))];
+  
+  console.log(`Email OAuth redirect URIs (${env.platform}): ${uniqueUris.join(', ')}`);
+  return uniqueUris;
+}
+
+function getEmailOAuthRedirectUri(): string {
+  // Use enhanced secure callback URL function with environment detection and logging
+  const callbackUrl = getSecureCallbackURL('email', '/api/email/callback');
+  
+  // Additional validation for email OAuth
+  const env = detectEnvironment();
+  const validation = validateDomainSecurity(callbackUrl, env.isProduction);
+  
+  if (!validation.isSecure && env.isProduction) {
+    console.error(`Email OAuth redirect URI security violation: ${validation.errors.join(', ')}`);
+    throw new Error('Email OAuth redirect URI must use HTTPS in production');
+  }
+  
+  console.log(`Primary email OAuth redirect URI: ${callbackUrl}`);
+  return callbackUrl;
+}
 
 export class EmailService {
   // Secure encryption key from environment - validated at startup
@@ -275,16 +333,31 @@ export class EmailService {
       throw new Error(`Email provider ${provider} not supported`);
     }
 
-    // Validate redirect URI against allowlist
-    const allowedRedirectUris = [
-      process.env.EMAIL_OAUTH_REDIRECT_URI,
-      `${process.env.FRONTEND_URL || 'http://localhost:5000'}/api/email/callback`,
-      'http://localhost:5000/api/email/callback'
-    ].filter(Boolean);
+    console.log(`Initiating email OAuth for provider: ${provider}, user: ${userId}`);
     
-    if (!allowedRedirectUris.includes(redirectUri)) {
+    // Enhanced security validation for redirect URI
+    const env = detectEnvironment();
+    const domainValidation = validateDomainSecurity(redirectUri, env.isProduction);
+    
+    if (!domainValidation.isSecure) {
+      console.error(`Email OAuth redirect URI security validation failed: ${domainValidation.errors.join(', ')}`);
+      throw new Error(`Redirect URI security validation failed: ${domainValidation.errors.join(', ')}`);
+    }
+    
+    // Validate redirect URI against enhanced allowlist
+    const allowedRedirectUris = getEmailOAuthRedirectUris();
+    const isAllowed = allowedRedirectUris.some(allowedUri => {
+      // Support both exact match and origin-based matching
+      return redirectUri === allowedUri || redirectUri.startsWith(allowedUri.split('/api/')[0]);
+    });
+    
+    if (!isAllowed) {
+      console.error(`Email OAuth redirect URI not in allowlist: ${redirectUri}`);
+      console.error(`Allowed URIs: ${allowedRedirectUris.join(', ')}`);
       throw new Error(`Invalid redirect URI: ${redirectUri}. Allowed URIs: ${allowedRedirectUris.join(', ')}. Please configure this URI in your OAuth provider settings.`);
     }
+    
+    console.log(`Email OAuth redirect URI validated: ${redirectUri}`);
 
     // Create or update email configuration
     const existingConfig = await storage.getEmailConfigurations(userId);
@@ -344,9 +417,19 @@ export class EmailService {
       grant_type: "authorization_code",
       client_id: emailProvider.oauthConfig.clientId,
       code,
-      redirect_uri: process.env.EMAIL_OAUTH_REDIRECT_URI || "",
+      redirect_uri: redirectUri, // Use validated redirect URI instead of default
       code_verifier: codeVerifier
     };
+    
+    // Validate redirect URI before token exchange
+    const env = detectEnvironment();
+    const validation = validateDomainSecurity(tokenParams.redirect_uri, env.isProduction);
+    if (!validation.isSecure) {
+      console.error(`Token exchange redirect URI validation failed: ${validation.errors.join(', ')}`);
+      throw new Error('Invalid redirect URI for token exchange');
+    }
+    
+    console.log(`Exchanging email OAuth code for tokens, provider: ${provider}, redirect: ${tokenParams.redirect_uri}`);
 
     // Only add client_secret if not using PKCE (for backward compatibility)
     if (!codeVerifier) {
@@ -610,6 +693,59 @@ export class EmailService {
     return { subject, body };
   }
 
+  /**
+   * Validate email provider configuration and security
+   */
+  validateEmailProviderConfig(provider: string): { isValid: boolean; errors: string[] } {
+    const emailProvider = EMAIL_PROVIDERS[provider];
+    const errors: string[] = [];
+    
+    if (!emailProvider) {
+      errors.push(`Email provider '${provider}' not supported`);
+      return { isValid: false, errors };
+    }
+    
+    if (!emailProvider.oauthConfig.clientId) {
+      errors.push(`Missing client ID for email provider '${provider}'`);
+    }
+    
+    const env = detectEnvironment();
+    
+    // Validate OAuth URLs are secure in production
+    if (env.isProduction) {
+      if (!emailProvider.oauthConfig.authUrl.startsWith('https://')) {
+        errors.push(`Auth URL must use HTTPS in production: ${emailProvider.oauthConfig.authUrl}`);
+      }
+      if (!emailProvider.oauthConfig.tokenUrl.startsWith('https://')) {
+        errors.push(`Token URL must use HTTPS in production: ${emailProvider.oauthConfig.tokenUrl}`);
+      }
+    }
+    
+    return { isValid: errors.length === 0, errors };
+  }
+  
+  /**
+   * Get environment-specific email configuration
+   */
+  getEnvironmentConfig() {
+    const env = detectEnvironment();
+    const allowedUris = getEmailOAuthRedirectUris();
+    
+    return {
+      environment: env,
+      allowedRedirectUris: allowedUris,
+      providers: Object.values(EMAIL_PROVIDERS).map(provider => {
+        const validation = this.validateEmailProviderConfig(provider.name);
+        return {
+          name: provider.name,
+          configured: validation.isValid,
+          errors: validation.errors,
+          clientId: provider.oauthConfig.clientId ? '[CONFIGURED]' : '[MISSING]'
+        };
+      })
+    };
+  }
+  
   // Token refresh implementation
   async refreshAccessToken(userId: string, provider: string, configId: string): Promise<void> {
     const configurations = await storage.getEmailConfigurations(userId);

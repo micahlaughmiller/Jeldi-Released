@@ -1,0 +1,359 @@
+# Enhanced AWS Lambda/Serverless Framework Configuration
+# This is an advanced configuration for deploying to AWS Lambda
+
+service: jeldi-backend
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'production'}
+  timeout: 29
+  memorySize: 1024
+  
+  # Environment variables from SSM Parameter Store and environment
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    STAGE: ${self:provider.stage}
+    REGION: ${self:provider.region}
+    
+    # Database Configuration
+    DATABASE_URL: ${ssm:/jeldi/${self:provider.stage}/database-url}
+    
+    # Authentication & Security
+    JWT_SECRET: ${ssm:/jeldi/${self:provider.stage}/jwt-secret}
+    SESSION_SECRET: ${ssm:/jeldi/${self:provider.stage}/session-secret}
+    
+    # OAuth Configuration
+    GOOGLE_CLIENT_ID: ${ssm:/jeldi/${self:provider.stage}/google-client-id}
+    GOOGLE_CLIENT_SECRET: ${ssm:/jeldi/${self:provider.stage}/google-client-secret}
+    MICROSOFT_CLIENT_ID: ${ssm:/jeldi/${self:provider.stage}/microsoft-client-id}
+    MICROSOFT_CLIENT_SECRET: ${ssm:/jeldi/${self:provider.stage}/microsoft-client-secret}
+    
+    # External API Keys
+    OPENAI_API_KEY: ${ssm:/jeldi/${self:provider.stage}/openai-api-key}
+    
+    # Application URLs
+    FRONTEND_URL: ${ssm:/jeldi/${self:provider.stage}/frontend-url}
+    BACKEND_URL: 
+      Fn::Join:
+        - ''
+        - - 'https://'
+          - Ref: ApiGatewayRestApi
+          - '.execute-api.'
+          - ${self:provider.region}
+          - '.amazonaws.com/'
+          - ${self:provider.stage}
+    
+    # AWS Services
+    S3_BUCKET_NAME: ${self:service}-${self:provider.stage}-assets
+    CLOUDFRONT_DOMAIN: ${ssm:/jeldi/${self:provider.stage}/cloudfront-domain, ''}
+    SES_REGION: ${self:provider.region}
+    
+  # Enhanced IAM role permissions
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+        - ssm:GetParameters
+        - ssm:GetParametersByPath
+      Resource:
+        - "arn:aws:ssm:${self:provider.region}:*:parameter/jeldi/${self:provider.stage}/*"
+    
+    - Effect: Allow
+      Action:
+        - secretsmanager:GetSecretValue
+      Resource:
+        - "arn:aws:secretsmanager:${self:provider.region}:*:secret:jeldi/${self:provider.stage}/*"
+    
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+        - s3:PutObject
+        - s3:DeleteObject
+      Resource:
+        - "arn:aws:s3:::${self:service}-${self:provider.stage}-assets/*"
+    
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+        - ses:SendRawEmail
+      Resource:
+        - "*"
+    
+    - Effect: Allow
+      Action:
+        - logs:CreateLogGroup
+        - logs:CreateLogStream
+        - logs:PutLogEvents
+      Resource:
+        - "arn:aws:logs:${self:provider.region}:*:log-group:/aws/lambda/*"
+
+  # CloudFormation tags
+  tags:
+    Environment: ${self:provider.stage}
+    Service: ${self:service}
+    ManagedBy: serverless
+
+  # API Gateway configuration
+  apiGateway:
+    restApiId: ${ssm:/jeldi/${self:provider.stage}/api-gateway-id, ''}
+    restApiRootResourceId: ${ssm:/jeldi/${self:provider.stage}/api-gateway-root-resource-id, ''}
+    minimumCompressionSize: 1024
+    binaryMediaTypes:
+      - 'image/*'
+      - 'application/pdf'
+      - 'application/octet-stream'
+    
+  # VPC Configuration (uncomment if using VPC)
+  # vpc:
+  #   securityGroupIds:
+  #     - ${ssm:/jeldi/${self:provider.stage}/security-group-id}
+  #   subnetIds:
+  #     - ${ssm:/jeldi/${self:provider.stage}/subnet-id-1}
+  #     - ${ssm:/jeldi/${self:provider.stage}/subnet-id-2}
+
+functions:
+  # Main API function
+  api:
+    handler: dist/lambda.handler
+    name: ${self:service}-${self:provider.stage}-api
+    description: Main API handler for ${self:service}
+    timeout: 29
+    memorySize: 1024
+    reservedConcurrency: 50
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - Accept
+              - Origin
+              - X-Requested-With
+            allowCredentials: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - Accept
+              - Origin
+              - X-Requested-With
+            allowCredentials: true
+    
+    # Environment-specific configuration
+    environment:
+      FUNCTION_NAME: api
+      
+  # WebSocket connections handler (if using WebSockets)
+  websocketConnect:
+    handler: dist/websocket.connectHandler
+    name: ${self:service}-${self:provider.stage}-websocket-connect
+    events:
+      - websocket:
+          route: $connect
+          
+  websocketDisconnect:
+    handler: dist/websocket.disconnectHandler
+    name: ${self:service}-${self:provider.stage}-websocket-disconnect
+    events:
+      - websocket:
+          route: $disconnect
+          
+  websocketDefault:
+    handler: dist/websocket.defaultHandler
+    name: ${self:service}-${self:provider.stage}-websocket-default
+    events:
+      - websocket:
+          route: $default
+
+  # Background job processor (optional)
+  jobProcessor:
+    handler: dist/jobs.processor
+    name: ${self:service}-${self:provider.stage}-job-processor
+    timeout: 300
+    memorySize: 512
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - JobQueue
+              - Arn
+          batchSize: 10
+          maximumBatchingWindowInSeconds: 10
+
+  # Scheduled functions
+  healthCheck:
+    handler: dist/scheduled.healthCheck
+    name: ${self:service}-${self:provider.stage}-health-check
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: ${strToBool(${ssm:/jeldi/${self:provider.stage}/enable-health-check, 'true'})}
+
+plugins:
+  - serverless-offline
+  - serverless-webpack
+  - serverless-domain-manager
+  - serverless-plugin-warmup
+  - serverless-plugin-log-retention
+  - serverless-prune-plugin
+
+custom:
+  # Webpack configuration
+  webpack:
+    webpackConfig: './webpack.config.js'
+    includeModules: true
+    packager: 'npm'
+    excludeFiles: src/**/*.test.js
+    
+  # Serverless offline configuration
+  serverless-offline:
+    httpPort: 3001
+    websocketPort: 3002
+    lambdaPort: 3003
+    printOutput: true
+    
+  # Domain configuration
+  customDomain:
+    domainName: ${ssm:/jeldi/${self:provider.stage}/api-domain, ''}
+    stage: ${self:provider.stage}
+    basePath: ''
+    certificateName: ${ssm:/jeldi/${self:provider.stage}/ssl-certificate, ''}
+    createRoute53Record: true
+    endpointType: 'regional'
+    securityPolicy: tls_1_2
+    apiType: rest
+    
+  # Warmup configuration
+  warmup:
+    enabled: ${strToBool(${ssm:/jeldi/${self:provider.stage}/enable-warmup, 'false'})}
+    events:
+      - schedule: rate(5 minutes)
+    concurrency: 2
+    
+  # Log retention
+  logRetentionInDays: 14
+  
+  # Prune old versions
+  prune:
+    automatic: true
+    number: 5
+
+# CloudFormation resources
+resources:
+  Resources:
+    # S3 Bucket for assets
+    AssetsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${self:provider.stage}-assets
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        VersioningConfiguration:
+          Status: Enabled
+        LifecycleConfiguration:
+          Rules:
+            - Id: DeleteOldVersions
+              Status: Enabled
+              NoncurrentVersionExpirationInDays: 30
+              
+    # SQS Queue for background jobs
+    JobQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-jobs
+        MessageRetentionPeriod: 1209600 # 14 days
+        VisibilityTimeoutSeconds: 300
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - JobDeadLetterQueue
+              - Arn
+          maxReceiveCount: 3
+          
+    # Dead letter queue
+    JobDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-jobs-dlq
+        MessageRetentionPeriod: 1209600 # 14 days
+        
+    # CloudWatch Log Groups
+    ApiLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${self:provider.stage}-api
+        RetentionInDays: ${self:custom.logRetentionInDays}
+        
+    # API Gateway CloudWatch Role
+    ApiGatewayCloudWatchRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - apigateway.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ApiGatewayLogsPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:DescribeLogGroups
+                    - logs:DescribeLogStreams
+                    - logs:PutLogEvents
+                    - logs:GetLogEvents
+                    - logs:FilterLogEvents
+                  Resource: '*'
+
+  Outputs:
+    ApiGatewayRestApiId:
+      Value:
+        Ref: ApiGatewayRestApi
+      Export:
+        Name: ${self:service}-${self:provider.stage}-api-gateway-id
+        
+    ApiGatewayRestApiRootResourceId:
+      Value:
+        Fn::GetAtt:
+          - ApiGatewayRestApi
+          - RootResourceId
+      Export:
+        Name: ${self:service}-${self:provider.stage}-api-gateway-root-resource-id
+        
+    AssetsBucketName:
+      Value:
+        Ref: AssetsBucket
+      Export:
+        Name: ${self:service}-${self:provider.stage}-assets-bucket
+        
+    JobQueueUrl:
+      Value:
+        Ref: JobQueue
+      Export:
+        Name: ${self:service}-${self:provider.stage}-job-queue-url

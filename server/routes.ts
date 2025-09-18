@@ -12,7 +12,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import passport from "passport";
 import { OAuthService } from "./services/oauthService";
-import { getJwtSecret } from "./env-validation";
+import { getJwtSecret, detectEnvironment, getAllowedOrigins, validateDomainSecurity } from "./env-validation";
 import { RBACService, AuthenticatedRequest, loadUserPermissions, requirePermission, requireRole, requireAdmin, authWithPermissions } from "./services/rbac";
 
 // Type helper to convert AuthenticatedRequest handlers to standard RequestHandler
@@ -246,6 +246,28 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.status(500).json({ message: "Failed to get OAuth providers", error: (error as Error).message });
     }
   });
+  
+  // OAuth environment configuration endpoint (for debugging and validation)
+  app.get("/api/oauth/config", authenticateToken, asAuth(async (req, res) => {
+    try {
+      // Only allow admins to view OAuth configuration
+      if (req.user.role !== 'admin') {
+        return res.status(403).json({ message: "Admin access required" });
+      }
+      
+      const oauthConfig = OAuthService.getEnvironmentConfig();
+      const emailConfig = emailService.getEnvironmentConfig();
+      
+      res.json({
+        oauth: oauthConfig,
+        email: emailConfig,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("OAuth config endpoint error:", error);
+      res.status(500).json({ message: "Failed to get OAuth configuration", error: (error as Error).message });
+    }
+  }));
 
   // Secure OAuth session retrieval endpoint
   app.get("/api/auth/oauth-result/:sessionId", async (req, res) => {
@@ -264,7 +286,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
-  // Google OAuth routes
+  // Google OAuth routes with enhanced security
   app.get("/api/auth/google", async (req, res, next) => {
     try {
       // Check if Google OAuth is configured
@@ -279,6 +301,22 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           }
         });
       }
+      
+      // Validate request origin for security
+      const env = detectEnvironment();
+      const origin = req.get('origin') || req.get('referer');
+      if (origin) {
+        const validation = validateDomainSecurity(origin, env.isProduction);
+        if (!validation.isSecure || !validation.isAllowed) {
+          console.warn(`Google OAuth request from invalid origin: ${origin}`, validation.errors);
+          return res.status(400).json({ 
+            message: "OAuth requests must use HTTPS and be from an allowed domain",
+            errors: validation.errors 
+          });
+        }
+      }
+      
+      console.log(`Google OAuth initiated from origin: ${origin || 'unknown'}`);
 
       // Generate secure CSRF state
       const state = OAuthService.generateSecureState();
@@ -445,7 +483,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
-  // Microsoft OAuth routes
+  // Microsoft OAuth routes with enhanced security
   app.get("/api/auth/microsoft", async (req, res, next) => {
     try {
       // Check if Microsoft OAuth is configured
@@ -460,6 +498,19 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           }
         });
       }
+      
+      // Validate request origin for security
+      const env = detectEnvironment();
+      const origin = req.get('origin') || req.get('referer');
+      if (origin && env.isProduction) {
+        const validation = validateDomainSecurity(origin, env.isProduction);
+        if (!validation.isSecure) {
+          console.warn(`Microsoft OAuth request from insecure origin: ${origin}`);
+          return res.status(400).json({ message: "OAuth requests must use HTTPS in production" });
+        }
+      }
+      
+      console.log(`Microsoft OAuth initiated from origin: ${origin || 'unknown'}`);
 
       // Generate secure CSRF state
       const state = OAuthService.generateSecureState();
@@ -1827,8 +1878,28 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           console.log('Replit Outlook connector not available, using direct OAuth');
         }
         
-        // Use direct OAuth for retail Outlook.com accounts
-        const redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/email/callback`;
+        // Use direct OAuth for retail Outlook.com accounts with enhanced security
+        const env = detectEnvironment();
+        let redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI;
+        
+        if (!redirectUri) {
+          // Build redirect URI from request with security validation
+          const protocol = env.isProduction ? 'https' : req.protocol;
+          const host = req.get('host');
+          redirectUri = `${protocol}://${host}/api/email/callback`;
+          
+          // Validate the constructed URI
+          const validation = validateDomainSecurity(redirectUri, env.isProduction);
+          if (!validation.isSecure || !validation.isAllowed) {
+            console.error(`Email OAuth redirect URI validation failed: ${validation.errors.join(', ')}`);
+            return res.status(400).json({ 
+              message: "Email OAuth redirect URI must use HTTPS and be from an allowed domain",
+              errors: validation.errors 
+            });
+          }
+        }
+        
+        console.log(`Outlook OAuth redirect URI: ${redirectUri}`);
         const authUrl = await emailService.initiateEmailOAuth(provider, req.user.id, redirectUri);
         
         // Audit log the OAuth attempt
@@ -1836,7 +1907,28 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         
         res.json({ authUrl });
       } else if (provider === 'gmail') {
-        const redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/email/callback`;
+        // Enhanced security for Gmail OAuth
+        const env = detectEnvironment();
+        let redirectUri = process.env.EMAIL_OAUTH_REDIRECT_URI;
+        
+        if (!redirectUri) {
+          // Build redirect URI from request with security validation
+          const protocol = env.isProduction ? 'https' : req.protocol;
+          const host = req.get('host');
+          redirectUri = `${protocol}://${host}/api/email/callback`;
+          
+          // Validate the constructed URI
+          const validation = validateDomainSecurity(redirectUri, env.isProduction);
+          if (!validation.isSecure || !validation.isAllowed) {
+            console.error(`Email OAuth redirect URI validation failed: ${validation.errors.join(', ')}`);
+            return res.status(400).json({ 
+              message: "Email OAuth redirect URI must use HTTPS and be from an allowed domain",
+              errors: validation.errors 
+            });
+          }
+        }
+        
+        console.log(`Gmail OAuth redirect URI: ${redirectUri}`);
         const authUrl = await emailService.initiateEmailOAuth(provider, req.user.id, redirectUri);
         
         // Audit log the OAuth attempt
@@ -1905,14 +1997,33 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const { code, state } = req.query;
       
       if (!code || !state) {
+        console.error('Email OAuth callback missing required parameters');
         return res.status(400).json({ message: "Missing code or state parameter" });
       }
-
-      const config = await emailService.handleEmailOAuthCallback(code as string, state as string);
       
-      res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard?email_connected=${config.provider}`);
+      // Enhanced security validation
+      const env = detectEnvironment();
+      const origin = req.get('origin') || req.get('referer');
+      
+      if (origin && env.isProduction) {
+        const validation = validateDomainSecurity(origin, env.isProduction);
+        if (!validation.isSecure) {
+          console.warn(`Email OAuth callback from insecure origin: ${origin}`);
+          // Don't fail the callback but log the warning
+        }
+      }
+      
+      console.log(`Email OAuth callback received, code: ${(code as string).substring(0, 10)}..., state: ${state}`);
+      
+      const config = await emailService.handleEmailOAuthCallback(code as string, state as string);
+      console.log(`Email OAuth callback successful for provider: ${config.provider}`);
+      
+      // Use environment-aware redirect URL
+      const frontendUrl = env.domain || process.env.FRONTEND_URL || 'http://localhost:5000';
+      res.redirect(`${frontendUrl}/email-center?status=connected&provider=${config.provider}`);
     } catch (error) {
-      res.status(400).json({ message: "Email OAuth callback failed", error: (error as Error).message });
+      console.error("Email OAuth callback error:", error);
+      res.redirect("/email-center?status=error&message=" + encodeURIComponent((error as Error).message));
     }
   });
 
