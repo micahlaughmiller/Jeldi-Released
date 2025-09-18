@@ -849,7 +849,26 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
       res.status(201).json(newOrganization);
     } catch (error) {
-      res.status(400).json({ message: "Failed to create organization", error: (error as Error).message });
+      // Check for PostgreSQL unique constraint violations
+      const errorMessage = (error as Error).message;
+      const errorCode = (error as any).code;
+      
+      // Handle unique constraint violations for organization name
+      if (
+        errorCode === '23505' || // PostgreSQL unique constraint violation code
+        errorMessage.toLowerCase().includes('unique constraint') ||
+        errorMessage.toLowerCase().includes('duplicate key') ||
+        (errorMessage.toLowerCase().includes('organizations_name_key') && 
+         errorMessage.toLowerCase().includes('already exists'))
+      ) {
+        return res.status(409).json({ 
+          message: "An organization with this name already exists. Please choose a different name.",
+          error: "duplicate_organization_name"
+        });
+      }
+      
+      // Handle other validation errors
+      res.status(400).json({ message: "Failed to create organization", error: errorMessage });
     }
   }));
 
