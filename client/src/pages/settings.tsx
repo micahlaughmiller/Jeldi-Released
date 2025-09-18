@@ -259,7 +259,7 @@ export default function Settings() {
 
   // Mutations
   const updateProfileMutation = useMutation({
-    mutationFn: (data: ProfileFormData) => apiRequest("/api/user/profile", "PUT", data),
+    mutationFn: (data: ProfileFormData) => apiRequest("PUT", "/api/user/profile", data),
     onSuccess: () => {
       toast({
         title: "Profile Updated",
@@ -278,7 +278,7 @@ export default function Settings() {
 
   const changePasswordMutation = useMutation({
     mutationFn: (data: PasswordFormData) => 
-      apiRequest("/api/user/password", "PUT", {
+      apiRequest("PUT", "/api/user/password", {
         currentPassword: data.currentPassword,
         newPassword: data.newPassword,
       }),
@@ -299,7 +299,7 @@ export default function Settings() {
   });
 
   const updatePreferencesMutation = useMutation({
-    mutationFn: (data: PreferencesFormData) => apiRequest("/api/user/preferences", "PUT", data),
+    mutationFn: (data: PreferencesFormData) => apiRequest("PUT", "/api/user/preferences", data),
     onSuccess: () => {
       toast({
         title: "Preferences Updated",
@@ -317,7 +317,7 @@ export default function Settings() {
   });
 
   const resetPreferencesMutation = useMutation({
-    mutationFn: () => apiRequest("/api/user/preferences/reset", "POST"),
+    mutationFn: () => apiRequest("POST", "/api/user/preferences/reset"),
     onSuccess: () => {
       toast({
         title: "Preferences Reset",
@@ -336,7 +336,7 @@ export default function Settings() {
 
   // Organization mutations
   const createOrganizationMutation = useMutation({
-    mutationFn: (data: OrganizationFormData) => apiRequest("/api/organizations", "POST", data),
+    mutationFn: (data: OrganizationFormData) => apiRequest("POST", "/api/organizations", data),
     onSuccess: () => {
       toast({
         title: "Organization Created",
@@ -357,7 +357,7 @@ export default function Settings() {
 
   const updateOrganizationMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<OrganizationFormData> }) => 
-      apiRequest(`/api/organizations/${id}`, "PUT", data),
+      apiRequest("PUT", `/api/organizations/${id}`, data),
     onSuccess: () => {
       toast({
         title: "Organization Updated",
@@ -376,7 +376,7 @@ export default function Settings() {
   });
 
   const deleteOrganizationMutation = useMutation({
-    mutationFn: (id: string) => apiRequest(`/api/organizations/${id}`, "DELETE"),
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/organizations/${id}`),
     onSuccess: () => {
       toast({
         title: "Organization Deleted",
@@ -395,7 +395,7 @@ export default function Settings() {
 
   const addMemberMutation = useMutation({
     mutationFn: ({ orgId, userData }: { orgId: string; userData: { userId: string } }) => 
-      apiRequest(`/api/organizations/${orgId}/members`, "POST", userData),
+      apiRequest("POST", `/api/organizations/${orgId}/members`, userData),
     onSuccess: () => {
       toast({
         title: "Member Added",
@@ -416,7 +416,7 @@ export default function Settings() {
 
   const removeMemberMutation = useMutation({
     mutationFn: ({ orgId, userId }: { orgId: string; userId: string }) => 
-      apiRequest(`/api/organizations/${orgId}/members/${userId}`, "DELETE"),
+      apiRequest("DELETE", `/api/organizations/${orgId}/members/${userId}`),
     onSuccess: () => {
       toast({
         title: "Member Removed",
@@ -435,7 +435,7 @@ export default function Settings() {
 
   const assignRoleMutation = useMutation({
     mutationFn: ({ orgId, userId, roleId }: { orgId: string; userId: string; roleId: string }) => 
-      apiRequest(`/api/organizations/${orgId}/assign-role`, "POST", { userId, roleId }),
+      apiRequest("POST", `/api/organizations/${orgId}/assign-role`, { userId, roleId }),
     onSuccess: () => {
       toast({
         title: "Role Assigned",
@@ -454,7 +454,7 @@ export default function Settings() {
 
   const revokeRoleMutation = useMutation({
     mutationFn: ({ orgId, userId, roleId }: { orgId: string; userId: string; roleId: string }) => 
-      apiRequest(`/api/organizations/${orgId}/revoke-role`, "DELETE", { userId, roleId }),
+      apiRequest("DELETE", `/api/organizations/${orgId}/revoke-role`, { userId, roleId }),
     onSuccess: () => {
       toast({
         title: "Role Revoked",
