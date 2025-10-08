@@ -13,6 +13,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { performLogout } from "@/lib/logout";
+import { getApiUrl } from "@/lib/api-config";
 
 interface User {
   id: string;
@@ -72,21 +73,48 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const userData = localStorage.getItem("user");
-    
-    if (!token || !userData) {
-      setLocation("/login");
-      return;
-    }
+    const initAuth = async () => {
+      const token = localStorage.getItem("token");
+      const userData = localStorage.getItem("user");
+      
+      // Check if on demo.jeldi.app and no auth token
+      const isDemoEnv = window.location.hostname.includes('demo.jeldi.app');
+      
+      if (!token || !userData) {
+        // Auto-login for demo environment
+        if (isDemoEnv) {
+          try {
+            const response = await fetch(getApiUrl('/api/auth/demo-login'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (response.ok) {
+              const data = await response.json();
+              localStorage.setItem("token", data.token);
+              localStorage.setItem("user", JSON.stringify(data.user));
+              setUser(data.user);
+              return;
+            }
+          } catch (error) {
+            console.error('Demo auto-login failed:', error);
+          }
+        }
+        
+        setLocation("/login");
+        return;
+      }
 
-    try {
-      setUser(JSON.parse(userData));
-    } catch (error) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      setLocation("/login");
-    }
+      try {
+        setUser(JSON.parse(userData));
+      } catch (error) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        setLocation("/login");
+      }
+    };
+    
+    initAuth();
   }, [setLocation]);
 
   // Handle OAuth callback parameters

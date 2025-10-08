@@ -424,6 +424,59 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
+  // Demo auto-login endpoint (only works on demo.jeldi.app)
+  app.post("/api/auth/demo-login", async (req, res) => {
+    try {
+      const hostname = req.headers.host || '';
+      const isDemoEnv = hostname.includes('demo.jeldi.app');
+      
+      if (!isDemoEnv) {
+        return res.status(403).json({ message: "Demo login only available on demo.jeldi.app" });
+      }
+
+      // Login as demo CFO user
+      const demoUser = await storage.getUserByEmail("cfo@demo.jeldi.app");
+      
+      if (!demoUser) {
+        return res.status(404).json({ message: "Demo user not found. Please initialize demo data." });
+      }
+
+      // Generate JWT (must use { userId } format for authenticateToken middleware)
+      const token = jwt.sign({ userId: demoUser.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+      
+      // Create session (must pass token as second parameter)
+      await sessionService.createSession(demoUser.id, token, req);
+
+      // Log demo login
+      await auditService.logAction({
+        userId: demoUser.id,
+        action: 'demo_login',
+        resource: 'users',
+        resourceId: demoUser.id,
+        status: 'success',
+        details: { environment: 'demo' },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
+      res.json({
+        token,
+        user: {
+          id: demoUser.id,
+          username: demoUser.username,
+          email: demoUser.email,
+          role: demoUser.role,
+          firstName: demoUser.firstName,
+          lastName: demoUser.lastName,
+          authProvider: demoUser.authProvider
+        }
+      });
+    } catch (error) {
+      console.error("Demo login error:", error);
+      res.status(500).json({ message: "Demo login failed", error: (error as Error).message });
+    }
+  });
+
   // OAuth routes
   app.get("/api/oauth/providers", async (req, res) => {
     try {

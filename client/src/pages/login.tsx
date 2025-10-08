@@ -362,7 +362,7 @@ export default function Login() {
                 Explore our platform with pre-populated KPIs, charts, and realistic enterprise data
               </p>
               <Button
-                onClick={() => window.location.href = "https://demo.jeldi.app"}
+                onClick={() => window.location.href = "https://demo.jeldi.app/dashboard"}
                 variant="outline"
                 className="w-full"
                 data-testid="button-view-demo"
