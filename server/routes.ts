@@ -2091,12 +2091,31 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // Dashboard KPI Preferences routes
   app.get("/api/dashboard/kpi-preferences", authenticateToken, asAuth(async (req, res) => {
     try {
-      const preferences = await storage.getDashboardKpiPreferences(req.user.id);
+      let preferences = await storage.getDashboardKpiPreferences(req.user.id);
       
-      // If no preferences exist, return role-based defaults
+      // If no preferences exist, auto-create role-based defaults
       if (preferences.length === 0) {
         const roleDefaults = getRoleBasedDefaultKPIs(req.user.role);
-        return res.json({ preferences: [], defaults: roleDefaults });
+        const allKpis = await storage.getKpiConfigurations(req.user.id);
+        
+        // Create default preferences for new user
+        const defaultKpiConfigs = roleDefaults
+          .map(kpiType => allKpis.find(k => k.type === kpiType))
+          .filter(k => k !== undefined);
+        
+        if (defaultKpiConfigs.length > 0) {
+          // Delete any existing preferences first (safety)
+          await storage.deleteDashboardKpiPreferences(req.user.id);
+          
+          // Create new preferences with defaults
+          await storage.createDashboardKpiPreferences(
+            req.user.id,
+            defaultKpiConfigs.map(k => k!.id)
+          );
+          
+          // Fetch the newly created preferences
+          preferences = await storage.getDashboardKpiPreferences(req.user.id);
+        }
       }
       
       // Fetch latest data for each KPI
@@ -2115,7 +2134,30 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/dashboard/available-kpis", authenticateToken, asAuth(async (req, res) => {
     try {
-      const allKpis = await storage.getKpiConfigurations(req.user.id);
+      let allKpis = await storage.getKpiConfigurations(req.user.id);
+      
+      // If no KPI configurations exist, create defaults
+      if (allKpis.length === 0) {
+        const defaultKpis = [
+          { type: 'cycle_time', name: 'Cycle Time', description: 'Average time to complete production cycle', category: 'operational', refreshInterval: 5000 },
+          { type: 'on_time_delivery', name: 'On-Time Delivery Rate', description: 'Percentage of orders delivered on time', category: 'operational', refreshInterval: 5000 },
+          { type: 'cost_per_unit', name: 'Cost Per Unit', description: 'Average cost to produce each unit', category: 'financial', refreshInterval: 5000 },
+          { type: 'working_capital_efficiency', name: 'Working Capital Efficiency', description: 'Ratio of working capital to revenue', category: 'financial', refreshInterval: 5000 },
+          { type: 'gross_margin', name: 'Gross Margin', description: 'Gross profit as a percentage of revenue', category: 'financial', refreshInterval: 5000 },
+          { type: 'revenue', name: 'Monthly Revenue', description: 'Total revenue for the current month', category: 'financial', refreshInterval: 5000 },
+          { type: 'orders', name: 'Active Orders', description: 'Number of active orders being processed', category: 'operational', refreshInterval: 5000 },
+          { type: 'inventory', name: 'Inventory Fill Rate', description: 'Percentage of inventory filled', category: 'operational', refreshInterval: 5000 },
+          { type: 'performance', name: 'System Performance', description: 'Overall system performance metrics', category: 'performance', refreshInterval: 5000 },
+          { type: 'efficiency', name: 'Operational Efficiency', description: 'Overall operational efficiency score', category: 'performance', refreshInterval: 5000 },
+        ];
+        
+        for (const kpi of defaultKpis) {
+          await storage.createKpiConfiguration(req.user.id, kpi);
+        }
+        
+        // Fetch the newly created KPIs
+        allKpis = await storage.getKpiConfigurations(req.user.id);
+      }
       
       // Group KPIs by category
       const grouped = allKpis.reduce((acc, kpi) => {
@@ -2194,7 +2236,22 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // Dashboard Chart Preference routes
   app.get("/api/dashboard/chart-preferences", authenticateToken, asAuth(async (req, res) => {
     try {
-      const preferences = await storage.getDashboardChartPreferences(req.user.id);
+      let preferences = await storage.getDashboardChartPreferences(req.user.id);
+      
+      // If no chart preferences exist, auto-create default chart (cashflow_90d_60d_projected)
+      if (preferences.length === 0) {
+        await storage.createDashboardChartPreference(
+          req.user.id,
+          'cashflow_90d_60d_projected',
+          'Cashflow last 90 days and next 60 days projected',
+          'large',
+          1
+        );
+        
+        // Fetch the newly created preferences
+        preferences = await storage.getDashboardChartPreferences(req.user.id);
+      }
+      
       res.json(preferences);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch chart preferences", error: (error as Error).message });
