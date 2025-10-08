@@ -57,6 +57,26 @@ This is **Jeldi** - an enterprise ERP integration platform with a two-tier archi
   - Demo data service: Auto-populates demo users and ERP connections for demo.jeldi.app only
   - Production mode: overlay.jeldi.app runs with NO dummy data
 
+**Phase 6 - Comprehensive Demo Data System (January 2025):**
+- Full demo data seeding service for demo.jeldi.app:
+  - 3 demo users (CFO, COO, Admin) with secure passwords meeting 12+ character policy
+  - 3 ERP connections (SAP, NetSuite, Dynamics 365) pre-configured
+  - 10 universal KPI configurations with realistic demo values (2.3 days, 94.2%, $12.45, etc.)
+  - KPI data values with positive/negative change percentages
+  - 4 default chart preferences (cashflow, revenue, invoices, orders)
+- Enhanced auto-seeding for overlay.jeldi.app:
+  - 5 universal KPI configurations (blank placeholders, no data until ERP connected)
+  - 4 default chart preferences (blank placeholders, no data until ERP connected)
+  - Immediate visibility of dashboard structure on first sign-in
+- View Demo button on login page:
+  - Redirects to https://demo.jeldi.app for instant demo access
+  - No registration required for demo environment
+  - Shows fully populated KPIs and charts with realistic enterprise data
+- Environment-aware data seeding:
+  - demo.jeldi.app: Full dummy data with values automatically populated
+  - overlay.jeldi.app: Blank placeholders that populate after ERP connection
+  - Automatic one-time initialization on server startup
+
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
