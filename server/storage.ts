@@ -19,6 +19,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
+import { encryptionService } from "./services/encryptionService";
 
 export interface IStorage {
   // User operations
@@ -236,26 +237,87 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getErpConnections(userId: string): Promise<ErpConnection[]> {
-    return await db.select().from(erpConnections).where(eq(erpConnections.userId, userId));
+    const connections = await db.select().from(erpConnections).where(eq(erpConnections.userId, userId));
+    
+    // Decrypt sensitive fields
+    return connections.map(conn => ({
+      ...conn,
+      accessToken: conn.accessToken ? encryptionService.decrypt(conn.accessToken) : null,
+      refreshToken: conn.refreshToken ? encryptionService.decrypt(conn.refreshToken) : null,
+      apiKey: conn.apiKey ? encryptionService.decrypt(conn.apiKey) : null,
+      apiSecret: conn.apiSecret ? encryptionService.decrypt(conn.apiSecret) : null,
+    }));
   }
 
   async getErpConnection(userId: string, erpSystem: string): Promise<ErpConnection | undefined> {
     const [connection] = await db.select().from(erpConnections)
       .where(and(eq(erpConnections.userId, userId), eq(erpConnections.erpSystem, erpSystem)));
-    return connection || undefined;
+    
+    if (!connection) return undefined;
+    
+    // Decrypt sensitive fields
+    return {
+      ...connection,
+      accessToken: connection.accessToken ? encryptionService.decrypt(connection.accessToken) : null,
+      refreshToken: connection.refreshToken ? encryptionService.decrypt(connection.refreshToken) : null,
+      apiKey: connection.apiKey ? encryptionService.decrypt(connection.apiKey) : null,
+      apiSecret: connection.apiSecret ? encryptionService.decrypt(connection.apiSecret) : null,
+    };
   }
 
   async createErpConnection(connection: InsertErpConnection): Promise<ErpConnection> {
-    const [newConnection] = await db.insert(erpConnections).values(connection).returning();
-    return newConnection;
+    // Encrypt sensitive fields before storing
+    const encryptedConnection = {
+      ...connection,
+      accessToken: connection.accessToken ? encryptionService.encrypt(connection.accessToken) : null,
+      refreshToken: connection.refreshToken ? encryptionService.encrypt(connection.refreshToken) : null,
+      apiKey: connection.apiKey ? encryptionService.encrypt(connection.apiKey) : null,
+      apiSecret: connection.apiSecret ? encryptionService.encrypt(connection.apiSecret) : null,
+    };
+    
+    const [newConnection] = await db.insert(erpConnections).values(encryptedConnection).returning();
+    
+    // Return decrypted version
+    return {
+      ...newConnection,
+      accessToken: newConnection.accessToken ? encryptionService.decrypt(newConnection.accessToken) : null,
+      refreshToken: newConnection.refreshToken ? encryptionService.decrypt(newConnection.refreshToken) : null,
+      apiKey: newConnection.apiKey ? encryptionService.decrypt(newConnection.apiKey) : null,
+      apiSecret: newConnection.apiSecret ? encryptionService.decrypt(newConnection.apiSecret) : null,
+    };
   }
 
   async updateErpConnection(id: string, updates: Partial<ErpConnection>): Promise<ErpConnection | undefined> {
+    // Encrypt sensitive fields if they are being updated
+    const encryptedUpdates = { ...updates };
+    if (updates.accessToken !== undefined) {
+      encryptedUpdates.accessToken = updates.accessToken ? encryptionService.encrypt(updates.accessToken) : null;
+    }
+    if (updates.refreshToken !== undefined) {
+      encryptedUpdates.refreshToken = updates.refreshToken ? encryptionService.encrypt(updates.refreshToken) : null;
+    }
+    if (updates.apiKey !== undefined) {
+      encryptedUpdates.apiKey = updates.apiKey ? encryptionService.encrypt(updates.apiKey) : null;
+    }
+    if (updates.apiSecret !== undefined) {
+      encryptedUpdates.apiSecret = updates.apiSecret ? encryptionService.encrypt(updates.apiSecret) : null;
+    }
+    
     const [updated] = await db.update(erpConnections)
-      .set(updates)
+      .set(encryptedUpdates)
       .where(eq(erpConnections.id, id))
       .returning();
-    return updated || undefined;
+    
+    if (!updated) return undefined;
+    
+    // Return decrypted version
+    return {
+      ...updated,
+      accessToken: updated.accessToken ? encryptionService.decrypt(updated.accessToken) : null,
+      refreshToken: updated.refreshToken ? encryptionService.decrypt(updated.refreshToken) : null,
+      apiKey: updated.apiKey ? encryptionService.decrypt(updated.apiKey) : null,
+      apiSecret: updated.apiSecret ? encryptionService.decrypt(updated.apiSecret) : null,
+    };
   }
 
   async getKpiConfigurations(userId: string): Promise<KpiConfiguration[]> {
@@ -399,21 +461,58 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getEmailConfigurations(userId: string): Promise<EmailConfiguration[]> {
-    return await db.select().from(emailConfigurations)
+    const configs = await db.select().from(emailConfigurations)
       .where(eq(emailConfigurations.userId, userId));
+    
+    // Decrypt sensitive fields
+    return configs.map(config => ({
+      ...config,
+      accessToken: config.accessToken ? encryptionService.decrypt(config.accessToken) : null,
+      refreshToken: config.refreshToken ? encryptionService.decrypt(config.refreshToken) : null,
+    }));
   }
 
   async createEmailConfiguration(config: InsertEmailConfiguration): Promise<EmailConfiguration> {
-    const [newConfig] = await db.insert(emailConfigurations).values(config).returning();
-    return newConfig;
+    // Encrypt sensitive fields before storing
+    const encryptedConfig = {
+      ...config,
+      accessToken: config.accessToken ? encryptionService.encrypt(config.accessToken) : null,
+      refreshToken: config.refreshToken ? encryptionService.encrypt(config.refreshToken) : null,
+    };
+    
+    const [newConfig] = await db.insert(emailConfigurations).values(encryptedConfig).returning();
+    
+    // Return decrypted version
+    return {
+      ...newConfig,
+      accessToken: newConfig.accessToken ? encryptionService.decrypt(newConfig.accessToken) : null,
+      refreshToken: newConfig.refreshToken ? encryptionService.decrypt(newConfig.refreshToken) : null,
+    };
   }
 
   async updateEmailConfiguration(id: string, updates: Partial<EmailConfiguration>): Promise<EmailConfiguration | undefined> {
+    // Encrypt sensitive fields if they are being updated
+    const encryptedUpdates = { ...updates };
+    if (updates.accessToken !== undefined) {
+      encryptedUpdates.accessToken = updates.accessToken ? encryptionService.encrypt(updates.accessToken) : null;
+    }
+    if (updates.refreshToken !== undefined) {
+      encryptedUpdates.refreshToken = updates.refreshToken ? encryptionService.encrypt(updates.refreshToken) : null;
+    }
+    
     const [updated] = await db.update(emailConfigurations)
-      .set(updates)
+      .set(encryptedUpdates)
       .where(eq(emailConfigurations.id, id))
       .returning();
-    return updated || undefined;
+    
+    if (!updated) return undefined;
+    
+    // Return decrypted version
+    return {
+      ...updated,
+      accessToken: updated.accessToken ? encryptionService.decrypt(updated.accessToken) : null,
+      refreshToken: updated.refreshToken ? encryptionService.decrypt(updated.refreshToken) : null,
+    };
   }
 
   async getChatHistory(userId: string, limit = 50): Promise<ChatHistory[]> {

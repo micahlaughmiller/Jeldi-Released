@@ -14,6 +14,9 @@ import passport from "passport";
 import { OAuthService } from "./services/oauthService";
 import { getJwtSecret, detectEnvironment, getAllowedOrigins, validateDomainSecurity } from "./env-validation";
 import { RBACService, AuthenticatedRequest, loadUserPermissions, requirePermission, requireRole, requireAdmin, authWithPermissions } from "./services/rbac";
+import { auditService } from "./services/auditService";
+import { sessionService } from "./services/sessionService";
+import { passwordPolicyService } from "./services/passwordPolicyService";
 
 // Type helper to convert AuthenticatedRequest handlers to standard RequestHandler
 const asAuth = (h: (req: AuthenticatedRequest, res: Response, next: NextFunction) => any): RequestHandler => 
@@ -121,7 +124,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }, 5 * 60 * 1000); // Every 5 minutes
   
-  // Authentication middleware
+  // Cleanup expired sessions periodically
+  setInterval(async () => {
+    try {
+      await sessionService.cleanupExpiredSessions();
+    } catch (error) {
+      console.error('Session cleanup error:', error);
+    }
+  }, 5 * 60 * 1000); // Every 5 minutes
+  
+  // Authentication middleware with session validation
   const authenticateToken = async (req: any, res: any, next: any) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -136,6 +148,16 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       if (!user) {
         return res.status(403).json({ message: 'Invalid token' });
       }
+      
+      // Validate session
+      const session = await sessionService.validateSession(token);
+      if (!session) {
+        return res.status(401).json({ message: 'Session expired or invalid' });
+      }
+      
+      // Update session activity
+      await sessionService.updateActivity(token);
+      
       // Extract only AuthUser fields to match AuthenticatedRequest interface
       req.user = {
         id: user.id,
@@ -158,13 +180,38 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // Check if user exists
       const existingUser = await storage.getUserByEmail(email);
       if (existingUser) {
+        await auditService.logAction({
+          action: 'register',
+          resource: 'users',
+          status: 'failure',
+          details: { email, reason: 'User already exists' },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent']
+        });
         return res.status(400).json({ message: "User already exists" });
       }
 
-      // Hash password (ensure password is provided for local registration)
+      // Validate password strength
       if (!password) {
         return res.status(400).json({ message: "Password is required for registration" });
       }
+      
+      const passwordValidation = passwordPolicyService.validatePassword(password);
+      if (!passwordValidation.valid) {
+        await auditService.logAction({
+          action: 'register',
+          resource: 'users',
+          status: 'failure',
+          details: { email, reason: 'Password policy violation', errors: passwordValidation.errors },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent']
+        });
+        return res.status(400).json({ 
+          message: "Password does not meet security requirements", 
+          errors: passwordValidation.errors 
+        });
+      }
+      
       const hashedPassword = await bcrypt.hash(password, 10);
       
       // Check if this is the first user (make them admin)
@@ -180,29 +227,49 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         role: isFirstUser ? "admin" : "user"
       });
 
-      // Assign RBAC role based on whether this is the first user
+      // Record password in history
+      await passwordPolicyService.recordPasswordChange(user.id, hashedPassword);
+
+      // Assign RBAC role
       try {
         const roleName = isFirstUser ? "admin" : "user";
         const role = await storage.getRoleByName(roleName);
         if (role) {
           await storage.assignRoleToUser(user.id, role.id);
-          console.log(`Assigned ${roleName} role to user ${user.email}`);
-        } else {
-          console.warn(`Role '${roleName}' not found for user assignment`);
         }
       } catch (roleError) {
-        console.error("Error assigning role to user:", roleError);
-        // Don't fail registration if role assignment fails
+        console.error("Error assigning role:", roleError);
       }
 
-      // Generate token
+      // Generate token and create session
       const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+      await sessionService.createSession(user.id, token, req);
+      
+      // Log successful registration
+      await auditService.logAction({
+        userId: user.id,
+        action: 'register',
+        resource: 'users',
+        resourceId: user.id,
+        status: 'success',
+        details: { email, username },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
       
       res.json({ 
         token, 
         user: { id: user.id, username: user.username, email: user.email, role: user.role }
       });
     } catch (error) {
+      await auditService.logAction({
+        action: 'register',
+        resource: 'users',
+        status: 'failure',
+        details: { error: (error as Error).message },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
       res.status(400).json({ message: "Registration failed", error: (error as Error).message });
     }
   });
@@ -211,38 +278,122 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     try {
       const { email, password } = req.body;
       
+      // Check account lockout
+      const isLocked = await passwordPolicyService.checkAccountLockout(email);
+      if (isLocked) {
+        await auditService.logAction({
+          action: 'login',
+          resource: 'users',
+          status: 'failure',
+          details: { email, reason: 'Account locked due to failed attempts' },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent']
+        });
+        return res.status(401).json({ 
+          message: "Account temporarily locked due to too many failed login attempts. Please try again in 30 minutes." 
+        });
+      }
+      
       const user = await storage.getUserByEmail(email);
       if (!user) {
+        await passwordPolicyService.recordLoginAttempt(email, false, req.ip);
+        await auditService.logAction({
+          action: 'login',
+          resource: 'users',
+          status: 'failure',
+          details: { email, reason: 'User not found' },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent']
+        });
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
       // Check if this is an OAuth user trying to login with password
       if (user.authProvider !== "local" || !user.password) {
+        await passwordPolicyService.recordLoginAttempt(email, false, req.ip, user.id);
+        await auditService.logAction({
+          userId: user.id,
+          action: 'login',
+          resource: 'users',
+          resourceId: user.id,
+          status: 'failure',
+          details: { email, reason: 'OAuth user attempted password login' },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent']
+        });
         return res.status(401).json({ message: "Please use OAuth login for this account" });
       }
 
       const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
+        await passwordPolicyService.recordLoginAttempt(email, false, req.ip, user.id);
+        await auditService.logAction({
+          userId: user.id,
+          action: 'login',
+          resource: 'users',
+          resourceId: user.id,
+          status: 'failure',
+          details: { email, reason: 'Invalid password' },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent']
+        });
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
+      // Successful login - record attempt and create session
+      await passwordPolicyService.recordLoginAttempt(email, true, req.ip, user.id);
+      
       const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+      await sessionService.createSession(user.id, token, req);
+      
+      await auditService.logAction({
+        userId: user.id,
+        action: 'login',
+        resource: 'users',
+        resourceId: user.id,
+        status: 'success',
+        details: { email },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
       
       res.json({ 
         token, 
         user: { id: user.id, username: user.username, email: user.email, role: user.role }
       });
     } catch (error) {
+      await auditService.logAction({
+        action: 'login',
+        resource: 'users',
+        status: 'failure',
+        details: { error: (error as Error).message },
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
       res.status(400).json({ message: "Login failed", error: (error as Error).message });
     }
   });
 
   app.post("/api/auth/logout", authenticateToken, asAuth(async (req, res) => {
     try {
-      // In a more advanced implementation, you could maintain a blacklist
-      // of revoked tokens or use a token store like Redis
-      // For now, we'll just confirm the logout was successful
-      // The client-side cleanup is the primary security measure
+      const authHeader = req.headers['authorization'];
+      const token = authHeader && authHeader.split(' ')[1];
+      
+      if (token) {
+        // Terminate session
+        await sessionService.terminateSession(token);
+        
+        // Log logout
+        await auditService.logAction({
+          userId: req.user.id,
+          action: 'logout',
+          resource: 'users',
+          resourceId: req.user.id,
+          status: 'success',
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent']
+        });
+      }
       
       res.json({ 
         message: "Logout successful", 
@@ -3324,6 +3475,160 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       });
     }
   }));
+
+  // ===== SECURITY COMPLIANCE ROUTES =====
+  
+  // Audit Log Routes
+  app.get("/api/audit/logs", authenticateToken, requireAdmin, asAuth(async (req, res) => {
+    try {
+      const { userId, action, resource, startDate, endDate, limit } = req.query;
+      const logs = await auditService.getAuditLogs({
+        userId: userId as string,
+        action: action as string,
+        resource: resource as string,
+        startDate: startDate ? new Date(startDate as string) : undefined,
+        endDate: endDate ? new Date(endDate as string) : undefined,
+        limit: limit ? parseInt(limit as string) : 100
+      });
+      res.json(logs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch audit logs", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/audit/my-activity", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+      const logs = await auditService.getUserActivity(req.user.id, limit);
+      res.json(logs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch activity logs", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/audit/export", authenticateToken, requireAdmin, asAuth(async (req, res) => {
+    try {
+      const format = (req.query.format as string) || 'json';
+      const logs = format === 'csv' 
+        ? await auditService.exportAuditLogsCSV()
+        : await auditService.exportAuditLogs();
+      
+      res.setHeader('Content-Type', format === 'csv' ? 'text/csv' : 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename=audit-logs.${format}`);
+      res.send(logs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to export audit logs", error: (error as Error).message });
+    }
+  }));
+
+  // Session Routes
+  app.get("/api/sessions/active", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const sessions = await sessionService.getUserActiveSessions(req.user.id);
+      res.json(sessions);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch sessions", error: (error as Error).message });
+    }
+  }));
+
+  app.delete("/api/sessions/:id", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const session = await sessionService.getSessionInfo(req.params.id);
+      if (!session || session.userId !== req.user.id) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      await sessionService.terminateSession(req.params.id);
+      await auditService.logAction({
+        userId: req.user.id,
+        action: 'session_terminate',
+        resource: 'sessions',
+        resourceId: req.params.id,
+        status: 'success',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+      res.json({ message: "Session terminated" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to terminate session", error: (error as Error).message });
+    }
+  }));
+
+  app.delete("/api/sessions/all", authenticateToken, asAuth(async (req, res) => {
+    try {
+      await sessionService.terminateAllUserSessions(req.user.id);
+      await auditService.logAction({
+        userId: req.user.id,
+        action: 'session_terminate_all',
+        resource: 'sessions',
+        status: 'success',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+      res.json({ message: "All sessions terminated" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to terminate sessions", error: (error as Error).message });
+    }
+  }));
+
+  // Security Settings Routes
+  app.post("/api/security/change-password", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const user = await storage.getUser(req.user.id);
+      
+      if (!user || !user.password) {
+        return res.status(400).json({ message: "Cannot change password for OAuth users" });
+      }
+
+      const isValid = await bcrypt.compare(currentPassword, user.password);
+      if (!isValid) {
+        await auditService.logAction({
+          userId: req.user.id,
+          action: 'password_change',
+          resource: 'users',
+          resourceId: req.user.id,
+          status: 'failure',
+          details: { reason: 'Invalid current password' },
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent']
+        });
+        return res.status(401).json({ message: "Current password is incorrect" });
+      }
+
+      const validation = passwordPolicyService.validatePassword(newPassword);
+      if (!validation.valid) {
+        return res.status(400).json({ message: "Password does not meet requirements", errors: validation.errors });
+      }
+
+      const newHash = await bcrypt.hash(newPassword, 10);
+      const canUse = await passwordPolicyService.checkPasswordHistory(req.user.id, newPassword);
+      if (!canUse) {
+        return res.status(400).json({ message: "Cannot reuse recent passwords" });
+      }
+
+      await storage.updateUser(req.user.id, { password: newHash });
+      await passwordPolicyService.recordPasswordChange(req.user.id, newHash);
+      
+      await auditService.logAction({
+        userId: req.user.id,
+        action: 'password_change',
+        resource: 'users',
+        resourceId: req.user.id,
+        status: 'success',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+
+      res.json({ message: "Password changed successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to change password", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/security/policy", (req, res) => {
+    const policy = passwordPolicyService.getPolicy();
+    res.json(policy);
+  });
 
   const httpServer = createServer(app);
 

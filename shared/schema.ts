@@ -271,6 +271,53 @@ export const auditLog = pgTable("audit_log", {
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
+// Security Compliance Tables (ISO 27001 / NIST 800-53)
+
+// Enhanced Audit Logs for security compliance
+export const auditLogs = pgTable("audit_logs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id),
+  action: text("action").notNull(), // login, logout, erp_connect, erp_disconnect, data_access, config_change, etc.
+  resource: text("resource").notNull(), // erp_connections, users, kpi_configurations, etc.
+  resourceId: text("resource_id"), // ID of affected resource
+  details: jsonb("details"), // Additional context
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  status: text("status").notNull(), // success, failure
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+// Session Management for security compliance
+export const sessions = pgTable("sessions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  token: text("token").notNull().unique(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  isActive: boolean("is_active").default(true).notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  lastActivity: timestamp("last_activity").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Password History for password reuse prevention
+export const passwordHistory = pgTable("password_history", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Login Attempts for account lockout
+export const loginAttempts = pgTable("login_attempts", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id),
+  email: text("email").notNull(),
+  success: boolean("success").notNull(),
+  ipAddress: text("ip_address"),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
 // Relations
 export const userRelations = relations(users, ({ many, one }) => ({
   erpConnections: many(erpConnections),
@@ -604,6 +651,28 @@ export const updateUserRoleSchema = insertUserRoleSchema.omit({
   roleId: true,
 }).partial();
 
+// Security Compliance Insert Schemas
+export const insertAuditLogsSchema = createInsertSchema(auditLogs).omit({
+  id: true,
+  timestamp: true,
+});
+
+export const insertSessionSchema = createInsertSchema(sessions).omit({
+  id: true,
+  createdAt: true,
+  lastActivity: true,
+});
+
+export const insertPasswordHistorySchema = createInsertSchema(passwordHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertLoginAttemptSchema = createInsertSchema(loginAttempts).omit({
+  id: true,
+  timestamp: true,
+});
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type InsertOAuthUser = z.infer<typeof insertOAuthUserSchema>;
@@ -658,6 +727,16 @@ export type InsertRolePermission = z.infer<typeof insertRolePermissionSchema>;
 export type RolePermission = typeof rolePermissions.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLog.$inferSelect;
+
+// Security Compliance Types
+export type InsertAuditLogs = z.infer<typeof insertAuditLogsSchema>;
+export type AuditLogs = typeof auditLogs.$inferSelect;
+export type InsertSession = z.infer<typeof insertSessionSchema>;
+export type Session = typeof sessions.$inferSelect;
+export type InsertPasswordHistory = z.infer<typeof insertPasswordHistorySchema>;
+export type PasswordHistory = typeof passwordHistory.$inferSelect;
+export type InsertLoginAttempt = z.infer<typeof insertLoginAttemptSchema>;
+export type LoginAttempt = typeof loginAttempts.$inferSelect;
 
 // Extended User Type with Roles and Permissions
 export interface UserWithRoles extends User {
