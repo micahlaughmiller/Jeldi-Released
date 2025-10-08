@@ -2091,17 +2091,20 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // Dashboard KPI Preferences routes
   app.get("/api/dashboard/kpi-preferences", authenticateToken, asAuth(async (req, res) => {
     try {
+      console.log('[KPI-PREFERENCES] Fetching preferences for user:', req.user.id);
       let preferences = await storage.getDashboardKpiPreferences(req.user.id);
+      console.log('[KPI-PREFERENCES] Found', preferences.length, 'existing preferences');
       
       // If no preferences exist, auto-create universal defaults (COO/CFO focused)
       if (preferences.length === 0) {
-        console.log('No KPI preferences found, auto-creating universal defaults for user:', req.user.id);
+        console.log('[KPI-PREFERENCES] No preferences found, starting auto-seed for user:', req.user.id);
         
         // First ensure KPI configurations exist - create them if they don't
         let allKpis = await storage.getKpiConfigurations(req.user.id);
+        console.log('[KPI-PREFERENCES] Found', allKpis.length, 'existing KPI configurations');
         
         if (allKpis.length === 0) {
-          console.log('No KPI configurations found, creating universal KPI configs first');
+          console.log('[KPI-PREFERENCES] Creating 10 universal KPI configs...');
           
           // Create universal KPI configurations
           const universalKpis = [
@@ -2118,36 +2121,52 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           ];
           
           for (const kpi of universalKpis) {
-            await storage.createKpiConfiguration(kpi);
+            try {
+              await storage.createKpiConfiguration(kpi);
+              console.log('[KPI-PREFERENCES] Created KPI config:', kpi.type);
+            } catch (kpiError) {
+              console.error('[KPI-PREFERENCES] Error creating KPI config:', kpi.type, kpiError);
+            }
           }
           
           allKpis = await storage.getKpiConfigurations(req.user.id);
-          console.log('Created', allKpis.length, 'universal KPI configurations');
+          console.log('[KPI-PREFERENCES] After creation, found', allKpis.length, 'KPI configurations');
         }
         
         // Now create default preferences
         const universalDefaults = ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'];
         
         const defaultKpiConfigs = universalDefaults
-          .map(kpiType => allKpis.find(k => k.type === kpiType))
+          .map(kpiType => {
+            const found = allKpis.find(k => k.type === kpiType);
+            if (!found) {
+              console.warn('[KPI-PREFERENCES] Could not find KPI config for type:', kpiType);
+            }
+            return found;
+          })
           .filter(k => k !== undefined);
         
-        console.log('Creating', defaultKpiConfigs.length, 'default KPI preferences');
+        console.log('[KPI-PREFERENCES] Creating', defaultKpiConfigs.length, 'default preferences from', universalDefaults.length, 'requested types');
         
         // Create default preferences one by one
         for (let i = 0; i < defaultKpiConfigs.length; i++) {
           const kpiConfig = defaultKpiConfigs[i]!;
-          await storage.createDashboardKpiPreference({
-            userId: req.user.id,
-            kpiConfigId: kpiConfig.id,
-            position: i + 1,
-            isVisible: true
-          });
+          try {
+            await storage.createDashboardKpiPreference({
+              userId: req.user.id,
+              kpiConfigId: kpiConfig.id,
+              position: i + 1,
+              isVisible: true
+            });
+            console.log('[KPI-PREFERENCES] Created preference for:', kpiConfig.type, 'at position', i + 1);
+          } catch (prefError) {
+            console.error('[KPI-PREFERENCES] Error creating preference for:', kpiConfig.type, prefError);
+          }
         }
         
         // Fetch the newly created preferences
         preferences = await storage.getDashboardKpiPreferences(req.user.id);
-        console.log('Successfully created', preferences.length, 'default KPI preferences');
+        console.log('[KPI-PREFERENCES] After auto-seed, fetched', preferences.length, 'preferences');
       }
       
       // Fetch latest data for each KPI
@@ -2158,8 +2177,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         })
       );
       
+      console.log('[KPI-PREFERENCES] Returning', preferencesWithData.length, 'preferences with data');
       res.json({ preferences: preferencesWithData, defaults: [] });
     } catch (error) {
+      console.error('[KPI-PREFERENCES] Fatal error:', error);
       res.status(500).json({ message: "Failed to fetch KPI preferences", error: (error as Error).message });
     }
   }));
