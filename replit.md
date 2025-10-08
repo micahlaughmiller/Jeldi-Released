@@ -3,7 +3,7 @@
 This is **Jeldi** - an enterprise ERP integration platform with a two-tier architecture:
 
 ## Product Architecture
-**Overlay Layer** (Current Implementation): Unified enterprise dashboard that integrates with multiple ERP systems (SAP, NetSuite, Dynamics 365, etc.) to provide real-time business intelligence through a centralized dashboard. Features KPI monitoring, AI-powered data analysis, email automation, and WebSocket-based real-time updates.
+**Overlay Layer** (Current Implementation): Unified enterprise dashboard that integrates with multiple ERP systems (SAP, NetSuite, Dynamics 365, Syteline, Epicor, etc.) to provide real-time business intelligence through a centralized dashboard. Features KPI monitoring, AI-powered data analysis, global AI assistant, customizable dashboards, and WebSocket-based real-time updates.
 
 **Full ERP Integration Layer** (Future): Complete bidirectional ERP integration with:
 - Data source reliability verification and validation
@@ -11,6 +11,29 @@ This is **Jeldi** - an enterprise ERP integration platform with a two-tier archi
 - In-app ERP data updates without leaving Jeldi
 - Role-based access control (project managers, finance, ops, etc.)
 - Real-time synchronization between Jeldi and ERP systems
+
+## Recent Updates (Phase 1-3 Complete)
+
+**Phase 1 - Dashboard Customization:**
+- Customizable KPI system: Select up to 5 KPIs with drag-drop reordering and role-based defaults
+- Customizable chart system: Unlimited charts with 4 default charts (revenue, invoices, refunds, cancellations)
+- ERP status relocated to header top-right position
+- Email center UI hidden (backend preserved)
+
+**Phase 2 - Global AI Assistant:**
+- AI assistant bar available on all screens (except account/settings)
+- 75/25 split-screen AI responses: top 75% current screen, bottom 25% AI answer
+- Inline response panel with answer, insights, recommendations
+- Minimize/maximize/close controls for AI responses
+
+**Phase 3 - ERP Management & Security Compliance (ISO 27001 / NIST 800-53):**
+- Enhanced ERP connection wizard: OAuth, API key, and custom configuration support
+- Added Syteline and Epicor ERP systems
+- AES-256-GCM encryption for all sensitive data at rest
+- Comprehensive audit logging system (all security events tracked)
+- Session management: 30-min timeout, max 3 concurrent sessions, auto-cleanup
+- Password policy: 12+ chars, complexity requirements, history (last 5), account lockout (5 attempts)
+- Security compliance documentation: ISO 27001 controls mapping, NIST 800-53 implementation
 
 # User Preferences
 
@@ -37,17 +60,24 @@ Preferred communication style: Simple, everyday language.
 - **Real-time Updates**: WebSocket server for broadcasting KPI updates and system status changes
 
 ## Authentication & Authorization
-- **Strategy**: JWT tokens with bcrypt password hashing
-- **Session Management**: Stateless authentication with token-based authorization middleware
-- **User Roles**: Role-based access control system with admin and user permissions
+- **Strategy**: JWT tokens with bcrypt password hashing (cost factor 10)
+- **Session Management**: Active session tracking with 30-minute timeout and max 3 concurrent sessions
+- **User Roles**: Role-based access control system with granular permissions (admin, finance, ops_manager, etc.)
+- **Security Compliance**: ISO 27001 and NIST 800-53 standards implementation
+- **Data Encryption**: AES-256-GCM encryption for all sensitive data at rest
+- **Audit Logging**: Comprehensive immutable audit trail for all security events
 
 ## Database Schema
-- **Users**: Authentication and profile management
-- **ERP Connections**: OAuth credentials and connection status for multiple ERP systems
+- **Users**: Authentication and profile management with OAuth support
+- **ERP Connections**: Flexible connection storage supporting OAuth, API key, and custom configurations
+- **Sessions**: Active session tracking with IP address, user agent, expiry management
+- **Audit Logs**: Immutable security event logging with full context (user, action, resource, IP, timestamp)
+- **Password History**: Track last 5 passwords to prevent reuse
+- **Login Attempts**: Failed login tracking for account lockout enforcement
 - **KPI Configurations**: User-defined metrics with positioning and refresh intervals
-- **KPI Data**: Time-series data for historical tracking and trend analysis
-- **Email Configurations**: Multi-provider email settings (Gmail, Outlook)
-- **Chat History**: AI conversation logs for business intelligence queries
+- **Dashboard Preferences**: KPI and chart customization per user with role-based defaults
+- **Email Configurations**: Multi-provider email settings with encrypted tokens (Gmail, Outlook)
+- **Conversations & Chat History**: AI conversation logs for business intelligence queries
 
 ## AI Integration
 - **Provider**: OpenAI GPT-5 for ERP data analysis and business insights
@@ -60,7 +90,10 @@ Preferred communication style: Simple, everyday language.
 - **SAP S/4HANA**: OAuth2 integration with analytics API access
 - **Oracle NetSuite**: RESTlet and web services integration
 - **Microsoft Dynamics 365**: Graph API integration with Office 365 connectivity
-- **Additional Systems**: Workday, IFS, Epicor, Infor, Acumatica, Sage support
+- **Infor SyteLine**: Manufacturing ERP with OAuth and API key support
+- **Epicor Kinetic**: Industry-specific ERP with IoT integration, OAuth and API key support
+- **Additional Systems**: Workday, IFS, Oracle Fusion, Infor, Acumatica, Sage support
+- **Connection Methods**: OAuth (automatic), API Key (manual), Custom Configuration (advanced)
 
 ## Email Service Providers
 - **Gmail**: Google OAuth2 with Gmail API for email sending
