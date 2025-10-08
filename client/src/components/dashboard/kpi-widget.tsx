@@ -45,7 +45,6 @@ export default function KPIWidget({ kpi, data, position, onDelete, preferenceId 
           onClick={(e) => {
             e.stopPropagation();
             e.preventDefault();
-            console.log('Deleting KPI preference:', preferenceId);
             onDelete(preferenceId);
           }}
           className="absolute top-2 right-2 w-8 h-8 rounded-full bg-destructive/10 text-destructive opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-destructive/20"
