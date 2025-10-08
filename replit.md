@@ -69,9 +69,16 @@ This is **Jeldi** - an enterprise ERP integration platform with a two-tier archi
   - 4 default chart preferences (blank placeholders, no data until ERP connected)
   - Immediate visibility of dashboard structure on first sign-in
 - View Demo button on login page:
-  - Redirects to https://demo.jeldi.app for instant demo access
+  - Redirects to https://demo.jeldi.app/dashboard for instant demo access
   - No registration required for demo environment
   - Shows fully populated KPIs and charts with realistic enterprise data
+- Demo auto-login implementation:
+  - POST /api/auth/demo-login endpoint (hostname-restricted to demo.jeldi.app)
+  - Frontend auto-detects demo environment and logs in as demo CFO automatically
+  - JWT format: { userId: demoUser.id } with 7-day expiry
+  - Session created via sessionService.createSession(userId, token, req)
+  - Audit logging for all demo login events
+  - Frictionless demo experience: Click "View Demo" → Instant dashboard with data
 - Environment-aware data seeding:
   - demo.jeldi.app: Full dummy data with values automatically populated
   - overlay.jeldi.app: Blank placeholders that populate after ERP connection
