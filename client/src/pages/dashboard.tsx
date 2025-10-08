@@ -59,51 +59,11 @@ export default function Dashboard() {
     enabled: !!user,
   });
 
-  // Fetch Chart Preferences
+  // Fetch Chart Preferences (backend auto-creates default if empty)
   const { data: chartPreferences = [] } = useQuery({
     queryKey: ["/api/dashboard/chart-preferences"],
     enabled: !!user,
   });
-
-  // Initialize default charts based on role
-  const initializeDefaultCharts = useMutation({
-    mutationFn: async (role: string) => {
-      const defaultChartsByRole: Record<string, string[]> = {
-        admin: ['cashflow_90d_60d_projected'],
-        finance: ['cashflow_90d_60d_projected'],
-        cfo: ['cashflow_90d_60d_projected'],
-        ops_manager: ['cashflow_90d_60d_projected'],
-        project_manager: ['cashflow_90d_60d_projected'],
-        manager: ['cashflow_90d_60d_projected'],
-        user: ['cashflow_90d_60d_projected'],
-      };
-
-      const defaultCharts = defaultChartsByRole[role] || defaultChartsByRole.user;
-      
-      // Create default chart preferences
-      for (let i = 0; i < defaultCharts.length; i++) {
-        await apiRequest("POST", "/api/dashboard/chart-preferences", {
-          chartType: defaultCharts[i],
-          size: 'large',
-        });
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/chart-preferences"] });
-    },
-  });
-
-  // Check if we need to initialize default charts
-  useEffect(() => {
-    if (user && Array.isArray(chartPreferences) && chartPreferences.length === 0) {
-      // Only initialize once
-      const hasInitialized = localStorage.getItem(`charts_initialized_${user.id}`);
-      if (!hasInitialized) {
-        initializeDefaultCharts.mutate(user.role);
-        localStorage.setItem(`charts_initialized_${user.id}`, 'true');
-      }
-    }
-  }, [user, chartPreferences]);
 
   // Fetch ERP systems
   const { data: systems = [], refetch: refetchSystems } = useQuery<ERPSystem[]>({

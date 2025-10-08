@@ -2095,39 +2095,59 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // If no preferences exist, auto-create universal defaults (COO/CFO focused)
       if (preferences.length === 0) {
-        console.log('No KPI preferences found, creating universal defaults for user:', req.user.id);
+        console.log('No KPI preferences found, auto-creating universal defaults for user:', req.user.id);
         
-        // First ensure KPI configurations exist
+        // First ensure KPI configurations exist - create them if they don't
         let allKpis = await storage.getKpiConfigurations(req.user.id);
         
-        // Auto-create universal KPIs if they don't exist (this will be done by available-kpis endpoint)
-        // For now, just use whatever KPIs are available
-        
-        if (allKpis.length > 0) {
-          // Universal default KPIs for all roles (COO/CFO focused)
-          const universalDefaults = ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'];
+        if (allKpis.length === 0) {
+          console.log('No KPI configurations found, creating universal KPI configs first');
           
-          const defaultKpiConfigs = universalDefaults
-            .map(kpiType => allKpis.find(k => k.type === kpiType))
-            .filter(k => k !== undefined);
+          // Create universal KPI configurations
+          const universalKpis = [
+            { userId: req.user.id, type: 'cycle_time', name: 'Cycle Time', erpSource: 'universal', query: 'Universal metric: Average time to complete production/service cycle', position: 1, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'on_time_delivery', name: 'On-Time Delivery Rate', erpSource: 'universal', query: 'Universal metric: Percentage of orders/deliveries completed on time', position: 2, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'cost_per_unit', name: 'Cost Per Unit', erpSource: 'universal', query: 'Universal metric: Average cost to produce/deliver each unit', position: 3, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'working_capital_efficiency', name: 'Working Capital Efficiency', erpSource: 'universal', query: 'Universal metric: Ratio of working capital to revenue (CFO focus)', position: 4, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'gross_margin', name: 'Gross Margin', erpSource: 'universal', query: 'Universal metric: Gross profit as percentage of revenue (CFO focus)', position: 5, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'revenue', name: 'Monthly Revenue', erpSource: 'universal', query: 'Universal metric: Total revenue for current period', position: 6, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'orders', name: 'Active Orders', erpSource: 'universal', query: 'Universal metric: Number of active orders being processed (COO focus)', position: 7, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'inventory', name: 'Inventory Fill Rate', erpSource: 'universal', query: 'Universal metric: Percentage of inventory filled/available', position: 8, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'performance', name: 'System Performance', erpSource: 'universal', query: 'Universal metric: Overall system performance score', position: 9, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, type: 'efficiency', name: 'Operational Efficiency', erpSource: 'universal', query: 'Universal metric: Overall operational efficiency (COO focus)', position: 10, isActive: true, refreshInterval: 30 },
+          ];
           
-          console.log('Creating', defaultKpiConfigs.length, 'default KPI preferences');
-          
-          // Create default preferences one by one
-          for (let i = 0; i < defaultKpiConfigs.length; i++) {
-            const kpiConfig = defaultKpiConfigs[i]!;
-            await storage.createDashboardKpiPreference({
-              userId: req.user.id,
-              kpiConfigId: kpiConfig.id,
-              position: i + 1,
-              isVisible: true
-            });
+          for (const kpi of universalKpis) {
+            await storage.createKpiConfiguration(kpi);
           }
           
-          // Fetch the newly created preferences
-          preferences = await storage.getDashboardKpiPreferences(req.user.id);
-          console.log('Created', preferences.length, 'default KPI preferences');
+          allKpis = await storage.getKpiConfigurations(req.user.id);
+          console.log('Created', allKpis.length, 'universal KPI configurations');
         }
+        
+        // Now create default preferences
+        const universalDefaults = ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'];
+        
+        const defaultKpiConfigs = universalDefaults
+          .map(kpiType => allKpis.find(k => k.type === kpiType))
+          .filter(k => k !== undefined);
+        
+        console.log('Creating', defaultKpiConfigs.length, 'default KPI preferences');
+        
+        // Create default preferences one by one
+        for (let i = 0; i < defaultKpiConfigs.length; i++) {
+          const kpiConfig = defaultKpiConfigs[i]!;
+          await storage.createDashboardKpiPreference({
+            userId: req.user.id,
+            kpiConfigId: kpiConfig.id,
+            position: i + 1,
+            isVisible: true
+          });
+        }
+        
+        // Fetch the newly created preferences
+        preferences = await storage.getDashboardKpiPreferences(req.user.id);
+        console.log('Successfully created', preferences.length, 'default KPI preferences');
       }
       
       // Fetch latest data for each KPI

@@ -69,10 +69,19 @@ function SortableKPI({ preference, index, onDelete }: SortableKPIProps) {
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
-      className="cursor-move"
+      className="relative group"
       data-testid={`sortable-kpi-${preference.kpiConfig.type}`}
     >
+      {/* Drag handle */}
+      <button
+        {...listeners}
+        className="absolute top-2 left-2 w-8 h-8 rounded-full bg-muted/50 text-muted-foreground opacity-0 hover:opacity-100 group-hover:opacity-70 transition-opacity flex items-center justify-center cursor-move z-10"
+        aria-label="Drag to reorder"
+        data-testid={`drag-handle-${preference.kpiConfig.type}`}
+      >
+        <i className="fas fa-grip-vertical text-sm"></i>
+      </button>
+      
       <KPIWidget
         kpi={preference.kpiConfig}
         data={preference.latestData}
