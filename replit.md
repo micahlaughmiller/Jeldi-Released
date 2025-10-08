@@ -12,7 +12,7 @@ This is **Jeldi** - an enterprise ERP integration platform with a two-tier archi
 - Role-based access control (project managers, finance, ops, etc.)
 - Real-time synchronization between Jeldi and ERP systems
 
-## Recent Updates (Phase 1-3 Complete)
+## Recent Updates (Phase 1-4 Complete)
 
 **Phase 1 - Dashboard Customization:**
 - Customizable KPI system: Select up to 5 KPIs with drag-drop reordering and role-based defaults
@@ -34,6 +34,14 @@ This is **Jeldi** - an enterprise ERP integration platform with a two-tier archi
 - Session management: 30-min timeout, max 3 concurrent sessions, auto-cleanup
 - Password policy: 12+ chars, complexity requirements, history (last 5), account lockout (5 attempts)
 - Security compliance documentation: ISO 27001 controls mapping, NIST 800-53 implementation
+
+**Phase 4 - Universal KPI Auto-Seeding (October 2025):**
+- Universal KPI architecture: Cross-ERP compatible KPIs with `erpSource='universal'` pattern
+- Auto-seeding logic: New users automatically get 10 universal KPI configs + 5 default preferences
+- 5 universal default KPIs: cycle_time, on_time_delivery, cost_per_unit, working_capital_efficiency, gross_margin
+- Drag handle UX fix: Separate grip icon for dragging prevents delete button click interference
+- Single endpoint auto-creation: GET /api/dashboard/kpi-preferences creates configs + preferences atomically
+- Production-ready: All E2E tests passing (register → auto-seed → delete → customize → drag-drop)
 
 # User Preferences
 
