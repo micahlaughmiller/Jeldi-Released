@@ -1,39 +1,44 @@
-service: jeldi-backend
+    service: jeldi-backend
+    frameworkVersion: '4'
 
-provider:
-  name: aws
-  runtime: nodejs18.x
-  region: us-east-2
-  stage: production
-  environment:
-    NODE_ENV: production
-    JWT_SECRET: ${env:JWT_SECRET}
-    DATABASE_URL: ${env:DATABASE_URL}
-    OPENAI_API_KEY: ${env:OPENAI_API_KEY}
-  iamRoleStatements:
-    - Effect: Allow
-      Action:
-        - secretsmanager:GetSecretValue
-      Resource: 
-        - "*"
+    provider:
+      name: aws
+      runtime: nodejs20.x   # update to 20.x (recommended); change to 18.x if you must
+      region: us-east-2
+      stage: production
+      environment:
+        NODE_ENV: production
+        JWT_SECRET: ${env:JWT_SECRET}
+        DATABASE_URL: ${env:DATABASE_URL}
+        OPENAI_API_KEY: ${env:OPENAI_API_KEY}
+      iamRoleStatements:
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource:
+            - "*"
 
-functions:
-  api:
-    handler: dist/lambda.handler
-    timeout: 25
-    events:
-      - http:
-          path: /
-          method: ANY
-          cors: true
-      - http:
-          path: /{proxy+}
-          method: ANY
-          cors: true
+    build:
+      esbuild:
+        bundle: false  # you're using dist/, so keep false. Set to true if you want Serverless to bundle.
 
-plugins:
-  - serverless-offline
+    functions:
+      api:
+        handler: dist/lambda.handler
+        timeout: 25
+        events:
+          - http:
+              path: /
+              method: ANY
+              cors: true
+          - http:
+              path: /{proxy+}
+              method: ANY
+              cors: true
 
-custom:
-  serverless-offline:
-    httpPort: 3001
+    plugins:
+      - serverless-offline
+
+    custom:
+      serverless-offline:
+        httpPort: 3001

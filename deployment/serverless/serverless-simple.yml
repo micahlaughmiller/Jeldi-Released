@@ -1,0 +1,19 @@
+service: jeldi-backend
+frameworkVersion: '4'
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-2
+  stage: production
+functions:
+  api:
+    handler: ../../server/lambda.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors: true
