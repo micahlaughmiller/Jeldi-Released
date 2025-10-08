@@ -45,9 +45,10 @@ interface DraggableKPIGridProps {
 interface SortableKPIProps {
   preference: KPIPreference;
   index: number;
+  onDelete: (id: string) => void;
 }
 
-function SortableKPI({ preference, index }: SortableKPIProps) {
+function SortableKPI({ preference, index, onDelete }: SortableKPIProps) {
   const {
     attributes,
     listeners,
@@ -76,6 +77,8 @@ function SortableKPI({ preference, index }: SortableKPIProps) {
         kpi={preference.kpiConfig}
         data={preference.latestData}
         position={index}
+        onDelete={onDelete}
+        preferenceId={preference.id}
       />
     </div>
   );
@@ -129,6 +132,30 @@ export default function DraggableKPIGrid({ preferences, onCustomize }: Draggable
       });
     },
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/dashboard/kpi-preferences/${id}`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kpi-preferences"] });
+      toast({
+        title: "KPI Removed",
+        description: "The KPI has been removed from your dashboard.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to remove KPI",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDelete = (id: string) => {
+    deleteMutation.mutate(id);
+  };
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -202,6 +229,7 @@ export default function DraggableKPIGrid({ preferences, onCustomize }: Draggable
                   key={preference.id}
                   preference={preference}
                   index={index}
+                  onDelete={handleDelete}
                 />
               ))}
               {Array.from({ length: emptySlots }, (_, i) => (

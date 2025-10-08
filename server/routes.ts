@@ -2185,6 +2185,21 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
+  app.delete("/api/dashboard/kpi-preferences/:id", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteDashboardKpiPreference(id);
+
+      if (!deleted) {
+        return res.status(404).json({ message: "KPI preference not found" });
+      }
+
+      res.json({ message: "KPI deleted successfully" });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to delete KPI", error: (error as Error).message });
+    }
+  }));
+
   // Dashboard Chart Preference routes
   app.get("/api/dashboard/chart-preferences", authenticateToken, asAuth(async (req, res) => {
     try {
@@ -2199,6 +2214,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     try {
       const user = req.user;
       const availableCharts = [
+        { id: 'cashflow_90d_60d_projected', name: 'Cash Flow (90d + 60d Projected)', category: 'financial', description: 'View cash flow for last 90 days and next 60 days projected', icon: 'dollar-sign', defaultSize: 'large', roles: ['admin', 'finance', 'cfo', 'ops_manager', 'project_manager', 'manager', 'user'] },
         { id: 'revenue_90d', name: 'Revenue (90 Days)', category: 'financial', description: 'Track revenue over the last 90 days', icon: 'trending-up', defaultSize: 'large', roles: ['admin', 'finance', 'cfo', 'manager', 'user'] },
         { id: 'unpaid_invoices', name: 'Unpaid Invoices', category: 'financial', description: 'Monitor outstanding invoice payments', icon: 'file-text', defaultSize: 'medium', roles: ['admin', 'finance', 'cfo', 'manager', 'user'] },
         { id: 'refunds', name: 'Refunds', category: 'financial', description: 'View refund trends over time', icon: 'arrow-left', defaultSize: 'medium', roles: ['admin', 'finance', 'cfo', 'manager', 'user'] },

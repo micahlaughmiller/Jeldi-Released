@@ -11,9 +11,11 @@ interface KPIWidgetProps {
     timestamp: Date;
   };
   position: number;
+  onDelete?: (id: string) => void;
+  preferenceId?: string;
 }
 
-export default function KPIWidget({ kpi, data, position }: KPIWidgetProps) {
+export default function KPIWidget({ kpi, data, position, onDelete, preferenceId }: KPIWidgetProps) {
   const getKPIIcon = (type: string) => {
     switch (type) {
       case "revenue": return "fas fa-dollar-sign";
@@ -35,9 +37,19 @@ export default function KPIWidget({ kpi, data, position }: KPIWidgetProps) {
 
   return (
     <div 
-      className="bg-card rounded-xl border border-border p-6 hover:shadow-lg transition-shadow" 
+      className="bg-card rounded-xl border border-border p-6 hover:shadow-lg transition-shadow relative group" 
       data-testid={`kpi-widget-${kpi.type}`}
     >
+      {onDelete && preferenceId && (
+        <button
+          onClick={() => onDelete(preferenceId)}
+          className="absolute top-2 right-2 w-8 h-8 rounded-full bg-destructive/10 text-destructive opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-destructive/20"
+          data-testid={`button-delete-kpi-${kpi.type}`}
+          title="Remove KPI"
+        >
+          <i className="fas fa-times text-sm"></i>
+        </button>
+      )}
       <div className="flex items-center justify-between mb-4">
         <div className={`w-12 h-12 bg-${color}/10 rounded-lg flex items-center justify-center`}>
           <i className={`${getKPIIcon(kpi.type)} text-${color} text-xl`}></i>
