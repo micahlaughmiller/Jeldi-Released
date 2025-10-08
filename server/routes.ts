@@ -63,17 +63,8 @@ async function broadcastERPStatusUpdate(userId: string) {
 
 // Helper function to get role-based default KPI types
 function getRoleBasedDefaultKPIs(role: string): string[] {
-  const defaults: Record<string, string[]> = {
-    admin: ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'],
-    finance: ['gross_margin', 'cost_per_unit', 'working_capital_efficiency', 'cash_flow', 'ar_aging'],
-    cfo: ['gross_margin', 'working_capital_efficiency', 'cost_per_unit', 'cash_flow', 'revenue'],
-    ops_manager: ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'inventory', 'quality_score'],
-    project_manager: ['cycle_time', 'on_time_delivery', 'budget', 'resource_utilization', 'milestones'],
-    manager: ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'],
-    user: ['cycle_time', 'on_time_delivery', 'gross_margin'],
-  };
-  
-  return defaults[role] || defaults.user;
+  // All roles get the same 5 default KPIs
+  return ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'];
 }
 
 // Helper function to categorize KPI types
