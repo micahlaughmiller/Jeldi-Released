@@ -2093,28 +2093,40 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     try {
       let preferences = await storage.getDashboardKpiPreferences(req.user.id);
       
-      // If no preferences exist, auto-create role-based defaults
+      // If no preferences exist, auto-create universal defaults (COO/CFO focused)
       if (preferences.length === 0) {
-        const roleDefaults = getRoleBasedDefaultKPIs(req.user.role);
-        const allKpis = await storage.getKpiConfigurations(req.user.id);
+        console.log('No KPI preferences found, creating universal defaults for user:', req.user.id);
         
-        // Create default preferences for new user
-        const defaultKpiConfigs = roleDefaults
-          .map(kpiType => allKpis.find(k => k.type === kpiType))
-          .filter(k => k !== undefined);
+        // First ensure KPI configurations exist
+        let allKpis = await storage.getKpiConfigurations(req.user.id);
         
-        if (defaultKpiConfigs.length > 0) {
-          // Delete any existing preferences first (safety)
-          await storage.deleteDashboardKpiPreferences(req.user.id);
+        // Auto-create universal KPIs if they don't exist (this will be done by available-kpis endpoint)
+        // For now, just use whatever KPIs are available
+        
+        if (allKpis.length > 0) {
+          // Universal default KPIs for all roles (COO/CFO focused)
+          const universalDefaults = ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'];
           
-          // Create new preferences with defaults
-          await storage.createDashboardKpiPreferences(
-            req.user.id,
-            defaultKpiConfigs.map(k => k!.id)
-          );
+          const defaultKpiConfigs = universalDefaults
+            .map(kpiType => allKpis.find(k => k.type === kpiType))
+            .filter(k => k !== undefined);
+          
+          console.log('Creating', defaultKpiConfigs.length, 'default KPI preferences');
+          
+          // Create default preferences one by one
+          for (let i = 0; i < defaultKpiConfigs.length; i++) {
+            const kpiConfig = defaultKpiConfigs[i]!;
+            await storage.createDashboardKpiPreference({
+              userId: req.user.id,
+              kpiConfigId: kpiConfig.id,
+              position: i + 1,
+              isVisible: true
+            });
+          }
           
           // Fetch the newly created preferences
           preferences = await storage.getDashboardKpiPreferences(req.user.id);
+          console.log('Created', preferences.length, 'default KPI preferences');
         }
       }
       
@@ -2335,16 +2347,20 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // If no chart preferences exist, auto-create default chart (cashflow_90d_60d_projected)
       if (preferences.length === 0) {
-        await storage.createDashboardChartPreference(
-          req.user.id,
-          'cashflow_90d_60d_projected',
-          'Cashflow last 90 days and next 60 days projected',
-          'large',
-          1
-        );
+        console.log('No chart preferences found, creating default cashflow chart for user:', req.user.id);
+        
+        await storage.createDashboardChartPreference({
+          userId: req.user.id,
+          chartType: 'cashflow_90d_60d_projected',
+          position: 1,
+          size: 'large',
+          isVisible: true,
+          configuration: { description: 'Cashflow last 90 days and next 60 days projected' }
+        });
         
         // Fetch the newly created preferences
         preferences = await storage.getDashboardChartPreferences(req.user.id);
+        console.log('Created default chart preference');
       }
       
       res.json(preferences);
