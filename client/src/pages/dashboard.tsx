@@ -6,7 +6,6 @@ import DraggableKPIGrid from "@/components/dashboard/draggable-kpi-grid";
 import KPISelector from "@/components/modals/kpi-selector";
 import DraggableChartGrid from "@/components/dashboard/draggable-chart-grid";
 import ChartSelector from "@/components/modals/chart-selector";
-import ChatInterface from "@/components/dashboard/chat-interface";
 import EmailComposer from "@/components/modals/email-composer";
 import ERPConnections from "@/components/modals/erp-connections";
 import { useRealtimeData } from "@/hooks/use-realtime-data";
@@ -210,8 +209,6 @@ export default function Dashboard() {
             />
           </div>
         </div>
-
-        <ChatInterface userId={user.id} />
       </main>
 
       <EmailComposer
