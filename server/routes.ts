@@ -64,13 +64,13 @@ async function broadcastERPStatusUpdate(userId: string) {
 // Helper function to get role-based default KPI types
 function getRoleBasedDefaultKPIs(role: string): string[] {
   const defaults: Record<string, string[]> = {
-    admin: ['revenue', 'orders', 'inventory', 'performance', 'efficiency'],
-    finance: ['revenue', 'profit_margin', 'cash_flow', 'ar_aging', 'expenses'],
-    cfo: ['revenue', 'profit_margin', 'cash_flow', 'ar_aging', 'expenses'],
-    ops_manager: ['orders', 'inventory', 'performance', 'delivery_time', 'quality_score'],
-    project_manager: ['project_status', 'budget', 'timeline', 'resource_utilization', 'milestones'],
-    manager: ['revenue', 'orders', 'performance', 'inventory', 'efficiency'],
-    user: ['revenue', 'orders', 'performance'],
+    admin: ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'],
+    finance: ['gross_margin', 'cost_per_unit', 'working_capital_efficiency', 'cash_flow', 'ar_aging'],
+    cfo: ['gross_margin', 'working_capital_efficiency', 'cost_per_unit', 'cash_flow', 'revenue'],
+    ops_manager: ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'inventory', 'quality_score'],
+    project_manager: ['cycle_time', 'on_time_delivery', 'budget', 'resource_utilization', 'milestones'],
+    manager: ['cycle_time', 'on_time_delivery', 'cost_per_unit', 'working_capital_efficiency', 'gross_margin'],
+    user: ['cycle_time', 'on_time_delivery', 'gross_margin'],
   };
   
   return defaults[role] || defaults.user;
@@ -79,17 +79,26 @@ function getRoleBasedDefaultKPIs(role: string): string[] {
 // Helper function to categorize KPI types
 function getCategoryForKpiType(type: string): string {
   const categories: Record<string, string> = {
+    // Financial KPIs
     revenue: 'financial',
     profit_margin: 'financial',
+    gross_margin: 'financial',
+    cost_per_unit: 'financial',
+    working_capital_efficiency: 'financial',
     cash_flow: 'financial',
     ar_aging: 'financial',
     expenses: 'financial',
+    // Operational KPIs
+    cycle_time: 'operational',
+    on_time_delivery: 'operational',
     orders: 'operational',
     inventory: 'operational',
     delivery_time: 'operational',
     quality_score: 'operational',
+    // Performance KPIs
     performance: 'performance',
     efficiency: 'performance',
+    // Project KPIs
     project_status: 'project',
     budget: 'project',
     timeline: 'project',
