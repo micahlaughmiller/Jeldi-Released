@@ -54,6 +54,20 @@ const iconMap: Record<string, any> = {
   "users": Users,
 };
 
+// Top 10 Suggested Charts for COO/CFO roles
+const suggestedChartIds = [
+  'revenue-trend',
+  'cost-analysis',
+  'profit-margin',
+  'cash-flow',
+  'orders-volume',
+  'operational-efficiency',
+  'inventory-turnover',
+  'delivery-performance',
+  'budget-variance',
+  'financial-kpis',
+];
+
 export default function ChartSelector({ isOpen, onClose }: ChartSelectorProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -152,45 +166,107 @@ export default function ChartSelector({ isOpen, onClose }: ChartSelectorProps) {
                     <p className="text-muted-foreground">No charts found</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filteredCharts.map((chart) => {
-                      const IconComponent = iconMap[chart.icon] || TrendingUp;
-                      return (
-                        <div
-                          key={chart.id}
-                          className="border rounded-lg p-4 hover:bg-accent transition-colors"
-                          data-testid={`chart-option-${chart.id}`}
-                        >
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                              <div className="p-2 rounded-lg bg-primary/10">
-                                <IconComponent className="h-5 w-5 text-primary" />
-                              </div>
-                              <div>
-                                <h4 className="font-semibold">{chart.name}</h4>
-                                <Badge variant="outline" className="mt-1 capitalize text-xs">
-                                  {chart.category}
-                                </Badge>
-                              </div>
+                  <>
+                    {/* Suggested Charts Section - only show on "all" category with no search */}
+                    {selectedCategory === "all" && !searchQuery && (() => {
+                      const suggested = charts.filter(chart => suggestedChartIds.includes(chart.id));
+                      if (suggested.length > 0) {
+                        return (
+                          <div className="mb-6 p-4 rounded-lg border border-amber-500/20 bg-amber-500/5">
+                            <div className="flex items-center gap-2 mb-4">
+                              <i className="fas fa-star text-amber-500"></i>
+                              <h3 className="font-semibold text-primary">Recommended for COO/CFO</h3>
+                              <Badge variant="default" className="text-xs bg-amber-500 hover:bg-amber-600">Top 10</Badge>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {suggested.map((chart) => {
+                                const IconComponent = iconMap[chart.icon] || TrendingUp;
+                                return (
+                                  <div
+                                    key={chart.id}
+                                    className="border border-amber-500/30 rounded-lg p-4 hover:bg-amber-500/10 transition-colors"
+                                    data-testid={`suggested-chart-${chart.id}`}
+                                  >
+                                    <div className="flex items-start justify-between mb-3">
+                                      <div className="flex items-center gap-3">
+                                        <div className="p-2 rounded-lg bg-amber-500/20">
+                                          <IconComponent className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                                        </div>
+                                        <div>
+                                          <h4 className="font-semibold flex items-center gap-2">
+                                            {chart.name}
+                                            <i className="fas fa-sparkles text-amber-500 text-xs"></i>
+                                          </h4>
+                                          <Badge variant="outline" className="mt-1 capitalize text-xs border-amber-500/30 text-amber-600 dark:text-amber-400">
+                                            {chart.category}
+                                          </Badge>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <p className="text-sm text-muted-foreground mb-4">
+                                      {chart.description}
+                                    </p>
+                                    <Button
+                                      onClick={() => handleAddChart(chart.id, chart.defaultSize)}
+                                      disabled={addChartMutation.isPending}
+                                      size="sm"
+                                      className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                                      data-testid={`button-add-suggested-${chart.id}`}
+                                    >
+                                      <i className="fas fa-plus mr-2"></i>
+                                      Add to Dashboard
+                                    </Button>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
-                          <p className="text-sm text-muted-foreground mb-4">
-                            {chart.description}
-                          </p>
-                          <Button
-                            onClick={() => handleAddChart(chart.id, chart.defaultSize)}
-                            disabled={addChartMutation.isPending}
-                            size="sm"
-                            className="w-full"
-                            data-testid={`button-add-${chart.id}`}
+                        );
+                      }
+                      return null;
+                    })()}
+
+                    {/* All Charts */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {filteredCharts.map((chart) => {
+                        const IconComponent = iconMap[chart.icon] || TrendingUp;
+                        return (
+                          <div
+                            key={chart.id}
+                            className="border rounded-lg p-4 hover:bg-accent transition-colors"
+                            data-testid={`chart-option-${chart.id}`}
                           >
-                            <i className="fas fa-plus mr-2"></i>
-                            Add to Dashboard
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 rounded-lg bg-primary/10">
+                                  <IconComponent className="h-5 w-5 text-primary" />
+                                </div>
+                                <div>
+                                  <h4 className="font-semibold">{chart.name}</h4>
+                                  <Badge variant="outline" className="mt-1 capitalize text-xs">
+                                    {chart.category}
+                                  </Badge>
+                                </div>
+                              </div>
+                            </div>
+                            <p className="text-sm text-muted-foreground mb-4">
+                              {chart.description}
+                            </p>
+                            <Button
+                              onClick={() => handleAddChart(chart.id, chart.defaultSize)}
+                              disabled={addChartMutation.isPending}
+                              size="sm"
+                              className="w-full"
+                              data-testid={`button-add-${chart.id}`}
+                            >
+                              <i className="fas fa-plus mr-2"></i>
+                              Add to Dashboard
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
               </ScrollArea>
             </TabsContent>
