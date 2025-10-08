@@ -2136,24 +2136,118 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     try {
       let allKpis = await storage.getKpiConfigurations(req.user.id);
       
-      // If no KPI configurations exist, create defaults
+      // If no KPI configurations exist, create universal defaults
       if (allKpis.length === 0) {
-        const defaultKpis = [
-          { type: 'cycle_time', name: 'Cycle Time', description: 'Average time to complete production cycle', category: 'operational', refreshInterval: 5000 },
-          { type: 'on_time_delivery', name: 'On-Time Delivery Rate', description: 'Percentage of orders delivered on time', category: 'operational', refreshInterval: 5000 },
-          { type: 'cost_per_unit', name: 'Cost Per Unit', description: 'Average cost to produce each unit', category: 'financial', refreshInterval: 5000 },
-          { type: 'working_capital_efficiency', name: 'Working Capital Efficiency', description: 'Ratio of working capital to revenue', category: 'financial', refreshInterval: 5000 },
-          { type: 'gross_margin', name: 'Gross Margin', description: 'Gross profit as a percentage of revenue', category: 'financial', refreshInterval: 5000 },
-          { type: 'revenue', name: 'Monthly Revenue', description: 'Total revenue for the current month', category: 'financial', refreshInterval: 5000 },
-          { type: 'orders', name: 'Active Orders', description: 'Number of active orders being processed', category: 'operational', refreshInterval: 5000 },
-          { type: 'inventory', name: 'Inventory Fill Rate', description: 'Percentage of inventory filled', category: 'operational', refreshInterval: 5000 },
-          { type: 'performance', name: 'System Performance', description: 'Overall system performance metrics', category: 'performance', refreshInterval: 5000 },
-          { type: 'efficiency', name: 'Operational Efficiency', description: 'Overall operational efficiency score', category: 'performance', refreshInterval: 5000 },
+        console.log('No KPI configurations found, creating universal defaults for user:', req.user.id);
+        
+        const universalKpis = [
+          { 
+            userId: req.user.id,
+            type: 'cycle_time', 
+            name: 'Cycle Time', 
+            erpSource: 'universal',
+            query: 'Universal metric: Average time to complete production/service cycle',
+            position: 1,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'on_time_delivery', 
+            name: 'On-Time Delivery Rate', 
+            erpSource: 'universal',
+            query: 'Universal metric: Percentage of orders/deliveries completed on time',
+            position: 2,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'cost_per_unit', 
+            name: 'Cost Per Unit', 
+            erpSource: 'universal',
+            query: 'Universal metric: Average cost to produce/deliver each unit',
+            position: 3,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'working_capital_efficiency', 
+            name: 'Working Capital Efficiency', 
+            erpSource: 'universal',
+            query: 'Universal metric: Ratio of working capital to revenue (CFO focus)',
+            position: 4,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'gross_margin', 
+            name: 'Gross Margin', 
+            erpSource: 'universal',
+            query: 'Universal metric: Gross profit as percentage of revenue (CFO focus)',
+            position: 5,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'revenue', 
+            name: 'Monthly Revenue', 
+            erpSource: 'universal',
+            query: 'Universal metric: Total revenue for current period',
+            position: 6,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'orders', 
+            name: 'Active Orders', 
+            erpSource: 'universal',
+            query: 'Universal metric: Number of active orders being processed (COO focus)',
+            position: 7,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'inventory', 
+            name: 'Inventory Fill Rate', 
+            erpSource: 'universal',
+            query: 'Universal metric: Percentage of inventory filled/available',
+            position: 8,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'performance', 
+            name: 'System Performance', 
+            erpSource: 'universal',
+            query: 'Universal metric: Overall system performance score',
+            position: 9,
+            isActive: true,
+            refreshInterval: 30
+          },
+          { 
+            userId: req.user.id,
+            type: 'efficiency', 
+            name: 'Operational Efficiency', 
+            erpSource: 'universal',
+            query: 'Universal metric: Overall operational efficiency (COO focus)',
+            position: 10,
+            isActive: true,
+            refreshInterval: 30
+          },
         ];
         
-        for (const kpi of defaultKpis) {
-          await storage.createKpiConfiguration(req.user.id, kpi);
+        for (const kpi of universalKpis) {
+          await storage.createKpiConfiguration(kpi);
         }
+        
+        console.log('Created', universalKpis.length, 'universal KPI configurations');
         
         // Fetch the newly created KPIs
         allKpis = await storage.getKpiConfigurations(req.user.id);
@@ -2169,6 +2263,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       res.json(grouped);
     } catch (error) {
+      console.error('Error in /api/dashboard/available-kpis:', error);
       res.status(500).json({ message: "Failed to fetch available KPIs", error: (error as Error).message });
     }
   }));
