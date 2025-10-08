@@ -12,20 +12,23 @@ class EncryptionService {
     const key = process.env.ENCRYPTION_KEY;
     
     if (!key) {
-      // Generate a secure key if not provided (for development)
-      const generatedKey = crypto.randomBytes(32).toString('hex');
-      console.warn('⚠️  WARNING: ENCRYPTION_KEY not set in environment. Generated temporary key.');
-      console.warn('   Please set ENCRYPTION_KEY in production: ' + generatedKey);
-      this.encryptionKey = Buffer.from(generatedKey, 'hex');
+      // CRITICAL: Fail fast if encryption key is missing
+      // Auto-generating a key causes data loss on restart (compliance violation)
+      throw new Error(
+        'ENCRYPTION_KEY environment variable is required but not set. ' +
+        'Please generate a secure 32-byte key and set it in your environment:\n' +
+        '  Example: ENCRYPTION_KEY=' + crypto.randomBytes(32).toString('hex') + '\n' +
+        'For Replit: Add this to Secrets tab. For AWS Lambda: Add to environment variables.'
+      );
+    }
+    
+    // Ensure key is 32 bytes for AES-256
+    if (key.length === 64) {
+      // Hex string (64 chars = 32 bytes)
+      this.encryptionKey = Buffer.from(key, 'hex');
     } else {
-      // Ensure key is 32 bytes for AES-256
-      if (key.length === 64) {
-        // Hex string
-        this.encryptionKey = Buffer.from(key, 'hex');
-      } else {
-        // Hash the key to ensure it's exactly 32 bytes
-        this.encryptionKey = crypto.createHash('sha256').update(key).digest();
-      }
+      // Hash the key to ensure it's exactly 32 bytes
+      this.encryptionKey = crypto.createHash('sha256').update(key).digest();
     }
   }
 

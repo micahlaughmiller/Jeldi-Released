@@ -141,6 +141,29 @@ class SessionService {
   }
 
   /**
+   * Get session info by ID
+   */
+  async getSessionById(sessionId: string): Promise<Session | null> {
+    const [session] = await db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+
+    return session || null;
+  }
+
+  /**
+   * Terminate session by ID
+   */
+  async terminateSessionById(sessionId: string): Promise<void> {
+    await db
+      .update(sessions)
+      .set({ isActive: false })
+      .where(eq(sessions.id, sessionId));
+  }
+
+  /**
    * Extend session expiry
    */
   async extendSession(token: string): Promise<void> {

@@ -3533,11 +3533,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.delete("/api/sessions/:id", authenticateToken, asAuth(async (req, res) => {
     try {
-      const session = await sessionService.getSessionInfo(req.params.id);
+      const session = await sessionService.getSessionById(req.params.id);
       if (!session || session.userId !== req.user.id) {
         return res.status(404).json({ message: "Session not found" });
       }
-      await sessionService.terminateSession(req.params.id);
+      await sessionService.terminateSessionById(req.params.id);
       await auditService.logAction({
         userId: req.user.id,
         action: 'session_terminate',
