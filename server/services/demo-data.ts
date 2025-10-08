@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { users, erpConnections, kpiConfigurations, dashboardKpiPreferences } from "@shared/schema";
+import { users, erpConnections, kpiConfigurations, kpiData, dashboardKpiPreferences, dashboardChartPreferences } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 
@@ -10,7 +10,7 @@ import bcrypt from "bcrypt";
  * overlay.jeldi.app runs in production mode with NO dummy data.
  * 
  * Environment detection:
- * - demo.jeldi.app: Auto-populate demo users, ERP connections, sample KPIs
+ * - demo.jeldi.app: Auto-populate demo users, ERP connections, sample KPIs, charts, and data
  * - overlay.jeldi.app: Production mode, no dummy data
  * - Development/Replit: No automatic dummy data (manual testing)
  */
@@ -66,6 +66,123 @@ export const DEMO_ERP_SYSTEMS = [
   },
 ];
 
+// Universal KPIs that work across all ERP systems
+export const UNIVERSAL_KPIS = [
+  {
+    name: "Cycle Time",
+    type: "cycle_time",
+    erpSource: "universal",
+    query: "SELECT AVG(cycle_time) FROM orders WHERE created_at >= NOW() - INTERVAL '30 days'",
+    position: 1,
+    demoValue: "2.3 days",
+    demoChange: "-8.5",
+  },
+  {
+    name: "On-Time Delivery",
+    type: "on_time_delivery",
+    erpSource: "universal",
+    query: "SELECT (COUNT(*) FILTER (WHERE delivered_on_time = true) * 100.0 / COUNT(*)) FROM deliveries WHERE created_at >= NOW() - INTERVAL '30 days'",
+    position: 2,
+    demoValue: "94.2%",
+    demoChange: "+3.1",
+  },
+  {
+    name: "Cost Per Unit",
+    type: "cost_per_unit",
+    erpSource: "universal",
+    query: "SELECT AVG(cost_per_unit) FROM production WHERE created_at >= NOW() - INTERVAL '30 days'",
+    position: 3,
+    demoValue: "$12.45",
+    demoChange: "-5.2",
+  },
+  {
+    name: "Working Capital Efficiency",
+    type: "working_capital_efficiency",
+    erpSource: "universal",
+    query: "SELECT (current_assets - current_liabilities) / revenue FROM financial_data WHERE period = 'current'",
+    position: 4,
+    demoValue: "1.85",
+    demoChange: "+12.3",
+  },
+  {
+    name: "Gross Margin",
+    type: "gross_margin",
+    erpSource: "universal",
+    query: "SELECT ((revenue - cogs) / revenue * 100) FROM financial_data WHERE period = 'current'",
+    position: 5,
+    demoValue: "42.7%",
+    demoChange: "+2.8",
+  },
+];
+
+// Additional KPIs for extended demo data
+export const ADDITIONAL_KPIS = [
+  {
+    name: "Revenue",
+    type: "revenue",
+    erpSource: "universal",
+    query: "SELECT SUM(amount) FROM transactions WHERE type = 'revenue' AND created_at >= NOW() - INTERVAL '30 days'",
+    demoValue: "$2.4M",
+    demoChange: "+15.3",
+  },
+  {
+    name: "Orders",
+    type: "orders",
+    erpSource: "universal",
+    query: "SELECT COUNT(*) FROM orders WHERE created_at >= NOW() - INTERVAL '30 days'",
+    demoValue: "1,847",
+    demoChange: "+8.2",
+  },
+  {
+    name: "Inventory Turnover",
+    type: "inventory",
+    erpSource: "universal",
+    query: "SELECT (cogs / avg_inventory) FROM financial_data WHERE period = 'current'",
+    demoValue: "6.2x",
+    demoChange: "+4.5",
+  },
+  {
+    name: "Efficiency Score",
+    type: "efficiency",
+    erpSource: "universal",
+    query: "SELECT AVG(efficiency_score) FROM operations WHERE created_at >= NOW() - INTERVAL '30 days'",
+    demoValue: "87.3%",
+    demoChange: "+2.1",
+  },
+  {
+    name: "Performance Index",
+    type: "performance",
+    erpSource: "universal",
+    query: "SELECT AVG(performance_index) FROM metrics WHERE created_at >= NOW() - INTERVAL '30 days'",
+    demoValue: "92.5",
+    demoChange: "+5.7",
+  },
+];
+
+// Default charts for demo users
+export const DEMO_CHARTS = [
+  {
+    chartType: "cashflow_90d_60d_projected",
+    position: 1,
+    size: "large",
+  },
+  {
+    chartType: "revenue_90d",
+    position: 2,
+    size: "large",
+  },
+  {
+    chartType: "unpaid_invoices",
+    position: 3,
+    size: "medium",
+  },
+  {
+    chartType: "orders_over_time",
+    position: 4,
+    size: "large",
+  },
+];
+
 /**
  * Check if current environment is demo.jeldi.app
  */
@@ -82,10 +199,11 @@ export function isDemoEnvironment(): boolean {
 export async function initializeDemoUsers() {
   if (!isDemoEnvironment()) {
     console.log('Skipping demo user initialization - not in demo environment');
-    return;
+    return [];
   }
 
   console.log('Initializing demo users for demo.jeldi.app...');
+  const createdUsers = [];
 
   for (const demoUser of DEMO_USERS) {
     try {
@@ -97,7 +215,8 @@ export async function initializeDemoUsers() {
         .limit(1);
 
       if (existing.length > 0) {
-        console.log(`Demo user ${demoUser.email} already exists, skipping`);
+        console.log(`Demo user ${demoUser.email} already exists, using existing`);
+        createdUsers.push(existing[0]);
         continue;
       }
 
@@ -106,7 +225,7 @@ export async function initializeDemoUsers() {
 
       // Create demo user
       const nameParts = demoUser.name.split(' ');
-      await db.insert(users).values({
+      const [newUser] = await db.insert(users).values({
         username: demoUser.name.toLowerCase().replace(/ /g, '_'),
         email: demoUser.email,
         password: hashedPassword,
@@ -114,19 +233,22 @@ export async function initializeDemoUsers() {
         lastName: nameParts[nameParts.length - 1],
         role: demoUser.role,
         authProvider: 'local',
-      });
+      }).returning();
 
+      createdUsers.push(newUser);
       console.log(`Created demo user: ${demoUser.email}`);
     } catch (error) {
       console.error(`Failed to create demo user ${demoUser.email}:`, error);
     }
   }
+
+  return createdUsers;
 }
 
 /**
  * Initialize demo ERP connections for demo users
  */
-export async function initializeDemoERPConnections() {
+export async function initializeDemoERPConnections(demoUsers: any[]) {
   if (!isDemoEnvironment()) {
     console.log('Skipping demo ERP initialization - not in demo environment');
     return;
@@ -134,47 +256,159 @@ export async function initializeDemoERPConnections() {
 
   console.log('Initializing demo ERP connections for demo.jeldi.app...');
 
-  // Get demo users
-  const demoUserRecords = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, DEMO_USERS[0].email));
-
-  if (demoUserRecords.length === 0) {
-    console.log('No demo users found, skipping ERP initialization');
+  if (demoUsers.length === 0) {
+    console.log('No demo users provided, skipping ERP initialization');
     return;
   }
 
-  const demoUserId = demoUserRecords[0].id;
+  for (const user of demoUsers) {
+    for (const erpSystem of DEMO_ERP_SYSTEMS) {
+      try {
+        // Check if ERP connection already exists
+        const existing = await db
+          .select()
+          .from(erpConnections)
+          .where(eq(erpConnections.userId, user.id));
 
-  for (const erpSystem of DEMO_ERP_SYSTEMS) {
+        const hasExisting = existing.some((e: any) => e.erpSystem === erpSystem.name);
+
+        if (hasExisting) {
+          console.log(`Demo ERP ${erpSystem.name} for ${user.email} already exists, skipping`);
+          continue;
+        }
+
+        // Create demo ERP connection
+        await db.insert(erpConnections).values({
+          userId: user.id,
+          erpSystem: erpSystem.name,
+          isConnected: true,
+          config: erpSystem.config as any,
+          connectionType: 'custom',
+          authMethod: 'api_key',
+        });
+
+        console.log(`Created demo ERP connection: ${erpSystem.name} for ${user.email}`);
+      } catch (error) {
+        console.error(`Failed to create demo ERP ${erpSystem.name} for ${user.email}:`, error);
+      }
+    }
+  }
+}
+
+/**
+ * Initialize demo KPI configurations and data
+ */
+export async function initializeDemoKPIs(demoUsers: any[]) {
+  if (!isDemoEnvironment()) {
+    console.log('Skipping demo KPI initialization - not in demo environment');
+    return;
+  }
+
+  console.log('Initializing demo KPI configurations and data...');
+
+  for (const user of demoUsers) {
     try {
-      // Check if ERP connection already exists
-      const existing = await db
+      // Check if user already has KPI configurations
+      const existingConfigs = await db
         .select()
-        .from(erpConnections)
-        .where(eq(erpConnections.userId, demoUserId));
+        .from(kpiConfigurations)
+        .where(eq(kpiConfigurations.userId, user.id));
 
-      const hasExisting = existing.some((e: any) => e.erpSystem === erpSystem.name);
-
-      if (hasExisting) {
-        console.log(`Demo ERP ${erpSystem.name} already exists, skipping`);
+      if (existingConfigs.length > 0) {
+        console.log(`User ${user.email} already has ${existingConfigs.length} KPI configurations, skipping`);
         continue;
       }
 
-      // Create demo ERP connection
-      await db.insert(erpConnections).values({
-        userId: demoUserId,
-        erpSystem: erpSystem.name,
-        isConnected: true,
-        config: erpSystem.config as any,
-        connectionType: 'custom',
-        authMethod: 'api_key',
-      });
+      // Create universal KPI configurations
+      const allKpis = [...UNIVERSAL_KPIS, ...ADDITIONAL_KPIS];
+      
+      for (const kpi of allKpis) {
+        // Create KPI configuration
+        const [config] = await db.insert(kpiConfigurations).values({
+          userId: user.id,
+          name: kpi.name,
+          type: kpi.type,
+          erpSource: kpi.erpSource,
+          query: kpi.query,
+          position: kpi.position || 0,
+          isActive: true,
+          refreshInterval: 30,
+        }).returning();
 
-      console.log(`Created demo ERP connection: ${erpSystem.name}`);
+        // Create demo KPI data
+        await db.insert(kpiData).values({
+          kpiId: config.id,
+          value: kpi.demoValue,
+          change: kpi.demoChange,
+        });
+
+        console.log(`Created KPI configuration and data: ${kpi.name} for ${user.email}`);
+      }
+
+      // Create dashboard preferences for the first 5 KPIs (universal defaults)
+      for (let i = 0; i < UNIVERSAL_KPIS.length; i++) {
+        const kpiType = UNIVERSAL_KPIS[i].type;
+        const config = await db
+          .select()
+          .from(kpiConfigurations)
+          .where(eq(kpiConfigurations.userId, user.id))
+          .then(configs => configs.find(c => c.type === kpiType));
+
+        if (config) {
+          await db.insert(dashboardKpiPreferences).values({
+            userId: user.id,
+            kpiConfigId: config.id,
+            position: i + 1,
+            isVisible: true,
+          });
+          console.log(`Created dashboard preference for ${config.name} at position ${i + 1}`);
+        }
+      }
+
     } catch (error) {
-      console.error(`Failed to create demo ERP ${erpSystem.name}:`, error);
+      console.error(`Failed to create demo KPIs for ${user.email}:`, error);
+    }
+  }
+}
+
+/**
+ * Initialize demo chart preferences
+ */
+export async function initializeDemoCharts(demoUsers: any[]) {
+  if (!isDemoEnvironment()) {
+    console.log('Skipping demo chart initialization - not in demo environment');
+    return;
+  }
+
+  console.log('Initializing demo chart preferences...');
+
+  for (const user of demoUsers) {
+    try {
+      // Check if user already has chart preferences
+      const existingCharts = await db
+        .select()
+        .from(dashboardChartPreferences)
+        .where(eq(dashboardChartPreferences.userId, user.id));
+
+      if (existingCharts.length > 0) {
+        console.log(`User ${user.email} already has ${existingCharts.length} chart preferences, skipping`);
+        continue;
+      }
+
+      // Create default chart preferences
+      for (const chart of DEMO_CHARTS) {
+        await db.insert(dashboardChartPreferences).values({
+          userId: user.id,
+          chartType: chart.chartType,
+          position: chart.position,
+          size: chart.size,
+          isVisible: true,
+        });
+        console.log(`Created chart preference: ${chart.chartType} for ${user.email}`);
+      }
+
+    } catch (error) {
+      console.error(`Failed to create demo charts for ${user.email}:`, error);
     }
   }
 }
@@ -192,8 +426,10 @@ export async function initializeAllDemoData() {
   console.log('🎭 Demo Environment Detected: Initializing sample data...');
 
   try {
-    await initializeDemoUsers();
-    await initializeDemoERPConnections();
+    const demoUsers = await initializeDemoUsers();
+    await initializeDemoERPConnections(demoUsers);
+    await initializeDemoKPIs(demoUsers);
+    await initializeDemoCharts(demoUsers);
     
     console.log('✅ Demo data initialization complete');
   } catch (error) {
