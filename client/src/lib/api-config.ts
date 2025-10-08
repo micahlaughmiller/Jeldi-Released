@@ -4,23 +4,45 @@ export const getApiBaseUrl = () => {
   
   const hostname = window.location.hostname;
   
-  // AWS CloudFront/Custom domains - use Lambda URL
+  // For custom domains, check if they're pointed to AWS Lambda or Replit
   if (hostname === 'demo.jeldi.app' || hostname === 'overlay.jeldi.app') {
+    // If running on Replit infrastructure (check origin), use relative URLs
+    if (window.location.origin.includes('replit')) {
+      return '';
+    }
+    // Otherwise use Lambda URL (when deployed to AWS)
     return 'https://kpqqhqz2akdmklu23echtowfvq0bajsz.lambda-url.us-east-2.on.aws';
   }
   
   // Replit hosted - use relative URLs to same origin
-  if (hostname.includes('replit.dev') || hostname.includes('replit.app')) {
-    return '';
-  }
-  
-  // Published Replit app with custom domain pointing to Replit
-  if (hostname === 'demo.jeldi.app' && window.location.origin.includes('replit')) {
+  if (hostname.includes('replit.dev') || hostname.includes('replit.app') || hostname.includes('repl.co')) {
     return '';
   }
   
   // Development/localhost - use relative URLs
   return '';
+};
+
+// Environment detection
+export const getEnvironment = (): 'demo' | 'overlay' | 'development' => {
+  if (typeof window === 'undefined') return 'development';
+  
+  const hostname = window.location.hostname;
+  
+  if (hostname === 'demo.jeldi.app') return 'demo';
+  if (hostname === 'overlay.jeldi.app') return 'overlay';
+  
+  return 'development';
+};
+
+// Check if demo environment (should have dummy data)
+export const isDemoEnvironment = () => {
+  return getEnvironment() === 'demo';
+};
+
+// Check if overlay environment (production, no dummy data)
+export const isOverlayEnvironment = () => {
+  return getEnvironment() === 'overlay';
 };
 
 // Custom domain detection

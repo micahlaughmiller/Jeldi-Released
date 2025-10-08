@@ -40,6 +40,20 @@ const categoryNames: Record<string, string> = {
   other: "Other",
 };
 
+// Top 10 Suggested KPIs for COO/CFO roles
+const suggestedKPITypes = [
+  'cycle_time',
+  'on_time_delivery',
+  'cost_per_unit',
+  'working_capital_efficiency',
+  'gross_margin',
+  'revenue',
+  'orders',
+  'inventory',
+  'efficiency',
+  'performance',
+];
+
 export default function KPISelector({ open, onOpenChange }: KPISelectorProps) {
   const { toast } = useToast();
   const [selectedKPIs, setSelectedKPIs] = useState<string[]>([]);
@@ -137,6 +151,65 @@ export default function KPISelector({ open, onOpenChange }: KPISelectorProps) {
         </div>
 
         <ScrollArea className="h-[400px] pr-4">
+          {/* Suggested KPIs Section */}
+          {Object.keys(availableKPIs).length > 0 && (() => {
+            const allKPIs = Object.values(availableKPIs).flat();
+            const suggested = allKPIs.filter(kpi => suggestedKPITypes.includes(kpi.type));
+            
+            if (suggested.length > 0) {
+              return (
+                <div className="mb-6 p-3 rounded-lg border border-primary/20 bg-primary/5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <i className="fas fa-star text-amber-500"></i>
+                    <h3 className="font-semibold text-sm text-primary">Recommended for COO/CFO</h3>
+                    <Badge variant="default" className="text-xs bg-amber-500 hover:bg-amber-600">Top 10</Badge>
+                  </div>
+                  <div className="space-y-1.5 pl-1">
+                    {suggested.map((kpi: KPI) => (
+                      <div
+                        key={kpi.id}
+                        className="flex items-center gap-3 p-2 rounded-lg hover:bg-primary/10 cursor-pointer transition-colors border border-transparent hover:border-primary/30"
+                        onClick={() => toggleKPI(kpi.id)}
+                        data-testid={`suggested-kpi-${kpi.type}`}
+                      >
+                        <Checkbox
+                          checked={selectedKPIs.includes(kpi.id)}
+                          onCheckedChange={() => toggleKPI(kpi.id)}
+                          data-testid={`checkbox-suggested-${kpi.type}`}
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-sm flex items-center gap-2">
+                            {kpi.name}
+                            <i className="fas fa-sparkles text-amber-500 text-xs"></i>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {kpi.type === 'cycle_time' && 'Average time to complete production/service cycle'}
+                            {kpi.type === 'on_time_delivery' && 'Percentage of orders/deliveries completed on time'}
+                            {kpi.type === 'cost_per_unit' && 'Average cost to produce/deliver each unit'}
+                            {kpi.type === 'working_capital_efficiency' && 'Ratio of working capital to revenue'}
+                            {kpi.type === 'gross_margin' && 'Gross profit as percentage of revenue'}
+                            {kpi.type === 'revenue' && 'Total revenue for current period'}
+                            {kpi.type === 'orders' && 'Number of active orders being processed'}
+                            {kpi.type === 'inventory' && 'Percentage of inventory filled/available'}
+                            {kpi.type === 'efficiency' && 'Overall operational efficiency'}
+                            {kpi.type === 'performance' && 'Overall system performance score'}
+                          </div>
+                        </div>
+                        {selectedKPIs.includes(kpi.id) && (
+                          <Badge variant="default" className="text-xs">
+                            {selectedKPIs.indexOf(kpi.id) + 1}
+                          </Badge>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
+          {/* All KPIs by Category */}
           {Object.entries(availableKPIs).map(([category, kpis]) => (
             <div key={category} className="mb-6">
               <div className="flex items-center gap-2 mb-3">
