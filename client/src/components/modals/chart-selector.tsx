@@ -54,18 +54,19 @@ const iconMap: Record<string, any> = {
   "users": Users,
 };
 
-// Top 10 Suggested Charts for COO/CFO roles
+// Top 10 Suggested Charts for COO/CFO roles (using actual chart IDs from backend)
+// Note: Charts filtered by role on backend, so this includes charts available to most roles
 const suggestedChartIds = [
-  'revenue-trend',
-  'cost-analysis',
-  'profit-margin',
-  'cash-flow',
-  'orders-volume',
-  'operational-efficiency',
-  'inventory-turnover',
-  'delivery-performance',
-  'budget-variance',
-  'financial-kpis',
+  'cashflow_90d_60d_projected', // Available to most roles
+  'revenue_90d',                // Available to most roles
+  'orders_over_time',           // Available to most roles
+  'unpaid_invoices',            // Available to finance/admin/managers
+  'refunds',                    // Available to finance/admin/managers
+  'cancellations',              // Available to ops/admin/managers
+  'cash_flow',                  // Finance/CFO/Admin only
+  'profit_margin',              // Finance/CFO/Admin only
+  'ar_aging',                   // Finance/CFO/Admin only
+  'budget_vs_actual',           // Project managers/Admin only
 ];
 
 export default function ChartSelector({ isOpen, onClose }: ChartSelectorProps) {

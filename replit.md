@@ -43,6 +43,20 @@ This is **Jeldi** - an enterprise ERP integration platform with a two-tier archi
 - Single endpoint auto-creation: GET /api/dashboard/kpi-preferences creates configs + preferences atomically
 - Production-ready: All E2E tests passing (register → auto-seed → delete → customize → drag-drop)
 
+**Phase 5 - Suggested KPIs/Charts & Multi-Environment Support (October 2025):**
+- Suggested KPIs: Top 10 COO/CFO-focused KPIs displayed prominently in customization modal with amber highlighting
+  - Includes cycle_time, on_time_delivery, cost_per_unit, working_capital_efficiency, gross_margin, revenue, orders, inventory, efficiency, performance
+  - Each KPI includes descriptive tooltip explaining what it measures
+  - "Recommended for COO/CFO" section with star icon and "Top 10" badge
+- Suggested Charts: Top 10 recommended charts for COO/CFO work in chart selector
+  - Amber highlighting and sparkles icon for suggested items
+  - Similar UX pattern to AI assistant suggested prompts
+- Multi-environment support: demo.jeldi.app vs overlay.jeldi.app routing
+  - Environment detection: Automatic routing based on hostname
+  - API config: Smart URL routing for Replit development, AWS Lambda production
+  - Demo data service: Auto-populates demo users and ERP connections for demo.jeldi.app only
+  - Production mode: overlay.jeldi.app runs with NO dummy data
+
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
