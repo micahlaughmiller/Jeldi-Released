@@ -2357,22 +2357,31 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     try {
       let preferences = await storage.getDashboardChartPreferences(req.user.id);
       
-      // If no chart preferences exist, auto-create default chart (cashflow_90d_60d_projected)
+      // If no chart preferences exist, auto-create default charts
       if (preferences.length === 0) {
-        console.log('No chart preferences found, creating default cashflow chart for user:', req.user.id);
+        console.log('No chart preferences found, creating default charts for user:', req.user.id);
         
-        await storage.createDashboardChartPreference({
-          userId: req.user.id,
-          chartType: 'cashflow_90d_60d_projected',
-          position: 1,
-          size: 'large',
-          isVisible: true,
-          configuration: { description: 'Cashflow last 90 days and next 60 days projected' }
-        });
+        // Create 4 default charts that work for all users
+        const defaultCharts = [
+          { chartType: 'cashflow_90d_60d_projected', position: 1, size: 'large' },
+          { chartType: 'revenue_90d', position: 2, size: 'large' },
+          { chartType: 'unpaid_invoices', position: 3, size: 'medium' },
+          { chartType: 'orders_over_time', position: 4, size: 'large' },
+        ];
+        
+        for (const chart of defaultCharts) {
+          await storage.createDashboardChartPreference({
+            userId: req.user.id,
+            chartType: chart.chartType,
+            position: chart.position,
+            size: chart.size,
+            isVisible: true,
+          });
+        }
         
         // Fetch the newly created preferences
         preferences = await storage.getDashboardChartPreferences(req.user.id);
-        console.log('Created default chart preference');
+        console.log(`Created ${defaultCharts.length} default chart preferences`);
       }
       
       res.json(preferences);
