@@ -29,6 +29,12 @@ export const erpConnections = pgTable("erp_connections", {
   tokenExpiry: timestamp("token_expiry"),
   config: jsonb("config"), // OAuth config and endpoints
   lastSync: timestamp("last_sync"),
+  connectionType: text("connection_type").default("oauth"), // 'oauth', 'api_key', 'custom'
+  apiKey: text("api_key"), // API key for manual connections (will be encrypted later)
+  apiSecret: text("api_secret"), // API secret for manual connections (will be encrypted later)
+  instanceUrl: text("instance_url"), // Custom endpoint for manual/custom connections
+  authMethod: text("auth_method").default("oauth"), // 'oauth', 'api_key', 'basic_auth', 'bearer_token'
+  metadata: jsonb("metadata"), // Custom ERP metadata
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

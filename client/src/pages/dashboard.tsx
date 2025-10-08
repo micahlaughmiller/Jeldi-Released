@@ -7,7 +7,7 @@ import KPISelector from "@/components/modals/kpi-selector";
 import DraggableChartGrid from "@/components/dashboard/draggable-chart-grid";
 import ChartSelector from "@/components/modals/chart-selector";
 import EmailComposer from "@/components/modals/email-composer";
-import ERPConnections from "@/components/modals/erp-connections";
+import ERPConnectionsModal from "@/components/erp/erp-connections-modal";
 import { useRealtimeData } from "@/hooks/use-realtime-data";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -216,10 +216,9 @@ export default function Dashboard() {
         onClose={() => setIsEmailModalOpen(false)}
       />
 
-      <ERPConnections
+      <ERPConnectionsModal
         isOpen={isERPModalOpen}
         onClose={() => setIsERPModalOpen(false)}
-        systems={systems}
       />
 
       <KPISelector

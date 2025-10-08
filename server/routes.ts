@@ -644,6 +644,100 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
+  app.post("/api/erp/test-connection", authenticateToken, requirePermission("erp_connections", "write"), asAuth(async (req, res) => {
+    try {
+      const { apiBaseUrl, authMethod, apiKey, apiSecret, accessToken, instanceUrl, erpSystem } = req.body;
+      
+      const result = await erpService.testConnection({
+        erpSystem,
+        apiBaseUrl,
+        authMethod,
+        apiKey,
+        apiSecret,
+        accessToken,
+        instanceUrl
+      });
+      
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        success: false,
+        message: "Connection test failed", 
+        error: (error as Error).message 
+      });
+    }
+  }));
+
+  app.put("/api/erp/config/:id", authenticateToken, requirePermission("erp_connections", "write"), asAuth(async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      
+      const updatedConnection = await storage.updateErpConnection(id, updates);
+      
+      if (!updatedConnection) {
+        return res.status(404).json({ message: "Connection not found" });
+      }
+      
+      await broadcastERPStatusUpdate(req.user.id);
+      
+      res.json(updatedConnection);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update connection", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/erp/connection-methods/:system", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
+    try {
+      const { system } = req.params;
+      const methods = await erpService.getConnectionMethods(system);
+      res.json(methods);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get connection methods", error: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/erp/connect-api-key", authenticateToken, requirePermission("erp_connections", "write"), asAuth(async (req, res) => {
+    try {
+      const { erpSystem, apiKey, apiSecret, instanceUrl } = req.body;
+      
+      const connection = await erpService.connectWithApiKey(
+        req.user.id,
+        erpSystem,
+        apiKey,
+        apiSecret,
+        instanceUrl
+      );
+      
+      await broadcastERPStatusUpdate(req.user.id);
+      
+      res.json(connection);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to connect ERP", error: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/erp/connect-custom", authenticateToken, requirePermission("erp_connections", "write"), asAuth(async (req, res) => {
+    try {
+      const { customName, apiBaseUrl, authMethod, credentials, metadata } = req.body;
+      
+      const connection = await erpService.connectCustomERP(
+        req.user.id,
+        customName,
+        apiBaseUrl,
+        authMethod,
+        credentials,
+        metadata
+      );
+      
+      await broadcastERPStatusUpdate(req.user.id);
+      
+      res.json(connection);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to connect custom ERP", error: (error as Error).message });
+    }
+  }));
+
   // RBAC routes
   // Get current user's roles and permissions
   app.get("/api/rbac/me", authenticateToken, loadUserPermissions, asAuth(async (req, res) => {

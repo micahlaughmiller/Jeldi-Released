@@ -12,6 +12,8 @@ export interface ERPSystem {
     scopes: string[];
   };
   apiBaseUrl: string;
+  supportsApiKey?: boolean;
+  supportsManualConfig?: boolean;
   isConnected?: boolean;
   lastSync?: Date;
 }
@@ -92,14 +94,16 @@ export const ERP_SYSTEMS: Record<string, ERPSystem> = {
   epicor: {
     name: "epicor",
     displayName: "Epicor Kinetic",
-    description: "Manufacturing focus, modern interface",
+    description: "Industry-specific ERP, IoT integration",
     oauthConfig: {
-      authUrl: "https://api.epicor.com/oauth/authorize",
-      tokenUrl: "https://api.epicor.com/oauth/token",
+      authUrl: "https://api.epicor.com/oauth2/authorize",
+      tokenUrl: "https://api.epicor.com/oauth2/token",
       clientId: process.env.EPICOR_CLIENT_ID || "",
-      scopes: ["erp.read", "erp.write"]
+      scopes: ["api"]
     },
-    apiBaseUrl: "https://api.epicor.com/v1"
+    apiBaseUrl: "https://api.epicor.com/api/v1",
+    supportsApiKey: true,
+    supportsManualConfig: true
   },
   infor: {
     name: "infor",
@@ -136,6 +140,20 @@ export const ERP_SYSTEMS: Record<string, ERPSystem> = {
       scopes: ["read", "write"]
     },
     apiBaseUrl: "https://api.intacct.com"
+  },
+  syteline: {
+    name: "syteline",
+    displayName: "Infor SyteLine",
+    description: "Manufacturing ERP, supply chain optimization",
+    oauthConfig: {
+      authUrl: "https://mingle.infor.com/authorize",
+      tokenUrl: "https://mingle.infor.com/token",
+      clientId: process.env.SYTELINE_CLIENT_ID || "",
+      scopes: ["api"]
+    },
+    apiBaseUrl: "https://api.syteline.infor.com/v1",
+    supportsApiKey: true,
+    supportsManualConfig: true
   }
 };
 
@@ -389,6 +407,223 @@ export class ERPService {
       tokenExpiry: null,
       lastSync: null
     });
+  }
+
+  async testConnection(connectionData: {
+    erpSystem?: string;
+    apiBaseUrl: string;
+    authMethod: string;
+    apiKey?: string;
+    apiSecret?: string;
+    accessToken?: string;
+    instanceUrl?: string;
+  }): Promise<{ success: boolean; message: string; details?: any }> {
+    try {
+      const { apiBaseUrl, authMethod, apiKey, apiSecret, accessToken } = connectionData;
+      
+      let headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+
+      // Set authorization header based on auth method
+      switch (authMethod) {
+        case "api_key":
+          if (!apiKey) {
+            return { success: false, message: "API key is required" };
+          }
+          headers["Authorization"] = `ApiKey ${apiKey}`;
+          if (apiSecret) {
+            headers["X-API-Secret"] = apiSecret;
+          }
+          break;
+        
+        case "bearer_token":
+          if (!accessToken) {
+            return { success: false, message: "Access token is required" };
+          }
+          headers["Authorization"] = `Bearer ${accessToken}`;
+          break;
+        
+        case "basic_auth":
+          if (!apiKey || !apiSecret) {
+            return { success: false, message: "Username and password are required" };
+          }
+          const credentials = Buffer.from(`${apiKey}:${apiSecret}`).toString('base64');
+          headers["Authorization"] = `Basic ${credentials}`;
+          break;
+        
+        case "oauth":
+          if (!accessToken) {
+            return { success: false, message: "OAuth access token is required" };
+          }
+          headers["Authorization"] = `Bearer ${accessToken}`;
+          break;
+        
+        default:
+          return { success: false, message: `Unsupported authentication method: ${authMethod}` };
+      }
+
+      // Test connection with a simple health check or list endpoint
+      const testEndpoint = `${apiBaseUrl}/health`;
+      const response = await fetch(testEndpoint, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (response.ok) {
+        return {
+          success: true,
+          message: "Connection successful",
+          details: {
+            status: response.status,
+            statusText: response.statusText
+          }
+        };
+      } else {
+        const errorText = await response.text().catch(() => "Unknown error");
+        return {
+          success: false,
+          message: `Connection failed: ${response.statusText}`,
+          details: {
+            status: response.status,
+            error: errorText
+          }
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: `Connection test failed: ${(error as Error).message}`,
+        details: {
+          error: (error as Error).message
+        }
+      };
+    }
+  }
+
+  async connectWithApiKey(
+    userId: string,
+    erpSystem: string,
+    apiKey: string,
+    apiSecret?: string,
+    instanceUrl?: string
+  ): Promise<ErpConnection> {
+    const system = ERP_SYSTEMS[erpSystem];
+    if (!system) {
+      throw new Error(`ERP system ${erpSystem} not supported`);
+    }
+
+    if (!system.supportsApiKey) {
+      throw new Error(`${system.displayName} does not support API key authentication`);
+    }
+
+    // Test connection first
+    const testResult = await this.testConnection({
+      erpSystem,
+      apiBaseUrl: instanceUrl || system.apiBaseUrl,
+      authMethod: "api_key",
+      apiKey,
+      apiSecret
+    });
+
+    if (!testResult.success) {
+      throw new Error(`Connection test failed: ${testResult.message}`);
+    }
+
+    // Check for existing connection
+    const existingConnection = await storage.getErpConnection(userId, erpSystem);
+    
+    if (existingConnection) {
+      // Update existing connection
+      const updated = await storage.updateErpConnection(existingConnection.id, {
+        connectionType: "api_key",
+        authMethod: "api_key",
+        apiKey,
+        apiSecret: apiSecret || null,
+        instanceUrl: instanceUrl || null,
+        isConnected: true,
+        lastSync: new Date()
+      });
+      
+      if (!updated) {
+        throw new Error("Failed to update connection");
+      }
+      return updated;
+    } else {
+      // Create new connection
+      return await storage.createErpConnection({
+        userId,
+        erpSystem,
+        connectionType: "api_key",
+        authMethod: "api_key",
+        apiKey,
+        apiSecret: apiSecret || null,
+        instanceUrl: instanceUrl || null,
+        isConnected: true,
+        config: system.oauthConfig
+      });
+    }
+  }
+
+  async connectCustomERP(
+    userId: string,
+    customName: string,
+    apiBaseUrl: string,
+    authMethod: string,
+    credentials: {
+      apiKey?: string;
+      apiSecret?: string;
+      accessToken?: string;
+    },
+    metadata?: any
+  ): Promise<ErpConnection> {
+    // Test connection first
+    const testResult = await this.testConnection({
+      apiBaseUrl,
+      authMethod,
+      ...credentials
+    });
+
+    if (!testResult.success) {
+      throw new Error(`Connection test failed: ${testResult.message}`);
+    }
+
+    // Create custom ERP connection
+    return await storage.createErpConnection({
+      userId,
+      erpSystem: customName.toLowerCase().replace(/\s+/g, '_'),
+      connectionType: "custom",
+      authMethod,
+      apiKey: credentials.apiKey || null,
+      apiSecret: credentials.apiSecret || null,
+      accessToken: credentials.accessToken || null,
+      instanceUrl: apiBaseUrl,
+      isConnected: true,
+      metadata: {
+        displayName: customName,
+        isCustom: true,
+        ...metadata
+      }
+    });
+  }
+
+  async getConnectionMethods(erpSystem: string): Promise<{
+    oauth: boolean;
+    apiKey: boolean;
+    manual: boolean;
+  }> {
+    const system = ERP_SYSTEMS[erpSystem];
+    
+    if (!system) {
+      return { oauth: false, apiKey: false, manual: false };
+    }
+
+    return {
+      oauth: !!system.oauthConfig?.clientId,
+      apiKey: system.supportsApiKey || false,
+      manual: system.supportsManualConfig || false
+    };
   }
 }
 
