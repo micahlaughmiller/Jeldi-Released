@@ -356,19 +356,19 @@ export default function Login() {
                 </Badge>
               </div>
               <h3 className="text-lg font-semibold mb-2">
-                Experience ERP Connect Pro Demo
+                Experience Jeldi Demo
               </h3>
               <p className="text-sm text-muted-foreground mb-4 max-w-sm mx-auto">
-                Explore our platform with realistic data from a $200M company over 90 days
+                Explore our platform with pre-populated KPIs, charts, and realistic enterprise data
               </p>
               <Button
-                onClick={() => setLocation("/demo")}
+                onClick={() => window.location.href = "https://demo.jeldi.app"}
                 variant="outline"
                 className="w-full"
                 data-testid="button-view-demo"
               >
                 <i className="fas fa-chart-line mr-2"></i>
-                View Live Demo
+                View Demo
               </Button>
             </CardContent>
           </Card>
