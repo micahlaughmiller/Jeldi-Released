@@ -2,15 +2,16 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import Sidebar from "@/components/layout/sidebar";
 import Header from "@/components/layout/header";
-import KPIWidget from "@/components/dashboard/kpi-widget";
-import RevenueChart from "@/components/dashboard/revenue-chart";
-import ERPStatus from "@/components/dashboard/erp-status";
+import DraggableKPIGrid from "@/components/dashboard/draggable-kpi-grid";
+import KPISelector from "@/components/modals/kpi-selector";
+import DraggableChartGrid from "@/components/dashboard/draggable-chart-grid";
+import ChartSelector from "@/components/modals/chart-selector";
 import ChatInterface from "@/components/dashboard/chat-interface";
 import EmailComposer from "@/components/modals/email-composer";
 import ERPConnections from "@/components/modals/erp-connections";
 import { useRealtimeData } from "@/hooks/use-realtime-data";
-import { useQuery } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { performLogout } from "@/lib/logout";
 
@@ -46,16 +47,64 @@ export default function Dashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isERPModalOpen, setIsERPModalOpen] = useState(false);
+  const [isKPISelectorOpen, setIsKPISelectorOpen] = useState(false);
+  const [isChartSelectorOpen, setIsChartSelectorOpen] = useState(false);
   const { toast } = useToast();
   
   // Real-time data hook
   const { kpiData, erpSystems, connectionStatus } = useRealtimeData();
 
-  // Fetch KPIs
-  const { data: kpis = [] } = useQuery<KPIConfig[]>({
-    queryKey: ["/api/kpis"],
+  // Fetch KPI Preferences
+  const { data: kpiPreferencesData } = useQuery<{ preferences: any[]; defaults: string[] }>({
+    queryKey: ["/api/dashboard/kpi-preferences"],
     enabled: !!user,
   });
+
+  // Fetch Chart Preferences
+  const { data: chartPreferences = [] } = useQuery({
+    queryKey: ["/api/dashboard/chart-preferences"],
+    enabled: !!user,
+  });
+
+  // Initialize default charts based on role
+  const initializeDefaultCharts = useMutation({
+    mutationFn: async (role: string) => {
+      const defaultChartsByRole: Record<string, string[]> = {
+        admin: ['revenue_90d', 'unpaid_invoices', 'refunds', 'cancellations'],
+        finance: ['revenue_90d', 'unpaid_invoices', 'cash_flow', 'profit_margin'],
+        cfo: ['revenue_90d', 'unpaid_invoices', 'cash_flow', 'ar_aging'],
+        ops_manager: ['orders_over_time', 'inventory_levels', 'delivery_performance', 'quality_metrics'],
+        project_manager: ['project_timeline', 'budget_vs_actual', 'resource_utilization'],
+        manager: ['revenue_90d', 'unpaid_invoices', 'refunds', 'cancellations'],
+        user: ['revenue_90d', 'unpaid_invoices', 'refunds', 'cancellations'],
+      };
+
+      const defaultCharts = defaultChartsByRole[role] || defaultChartsByRole.user;
+      
+      // Create default chart preferences
+      for (let i = 0; i < defaultCharts.length; i++) {
+        await apiRequest("POST", "/api/dashboard/chart-preferences", {
+          chartType: defaultCharts[i],
+          size: i === 0 ? 'large' : 'medium',
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/chart-preferences"] });
+    },
+  });
+
+  // Check if we need to initialize default charts
+  useEffect(() => {
+    if (user && Array.isArray(chartPreferences) && chartPreferences.length === 0) {
+      // Only initialize once
+      const hasInitialized = localStorage.getItem(`charts_initialized_${user.id}`);
+      if (!hasInitialized) {
+        initializeDefaultCharts.mutate(user.role);
+        localStorage.setItem(`charts_initialized_${user.id}`, 'true');
+      }
+    }
+  }, [user, chartPreferences]);
 
   // Fetch ERP systems
   const { data: systems = [], refetch: refetchSystems } = useQuery<ERPSystem[]>({
@@ -142,104 +191,23 @@ export default function Dashboard() {
         <Header 
           connectedCount={connectedSystemsCount}
           connectionStatus={connectionStatus}
-          onEmailClick={() => setIsEmailModalOpen(true)}
+          onERPClick={() => setIsERPModalOpen(true)}
+          onAccountClick={() => setLocation("/account")}
         />
         
         <div className="flex-1 overflow-auto">
           {/* KPI Dashboard */}
-          <div className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-8">
-              {kpis.slice(0, 5).map((kpi: KPIConfig, index: number) => (
-                <KPIWidget
-                  key={kpi.id}
-                  kpi={kpi}
-                  data={kpiData[kpi.id]}
-                  position={index}
-                />
-              ))}
-              
-              {/* Default KPIs if none configured */}
-              {kpis.length === 0 && (
-                <>
-                  <KPIWidget
-                    kpi={{
-                      id: "default-revenue",
-                      name: "Monthly Revenue",
-                      type: "revenue",
-                      position: 1
-                    }}
-                    data={{
-                      value: "$2.45M",
-                      change: 12.5,
-                      timestamp: new Date()
-                    }}
-                    position={0}
-                  />
-                  <KPIWidget
-                    kpi={{
-                      id: "default-orders",
-                      name: "Active Orders",
-                      type: "orders",
-                      position: 2
-                    }}
-                    data={{
-                      value: "1,247",
-                      change: 8.2,
-                      timestamp: new Date()
-                    }}
-                    position={1}
-                  />
-                  <KPIWidget
-                    kpi={{
-                      id: "default-inventory",
-                      name: "Inventory Fill Rate",
-                      type: "inventory",
-                      position: 3
-                    }}
-                    data={{
-                      value: "89.2%",
-                      change: -3.1,
-                      timestamp: new Date()
-                    }}
-                    position={2}
-                  />
-                  <KPIWidget
-                    kpi={{
-                      id: "default-performance",
-                      name: "System Performance",
-                      type: "performance",
-                      position: 4
-                    }}
-                    data={{
-                      value: "94.8%",
-                      change: 15.7,
-                      timestamp: new Date()
-                    }}
-                    position={3}
-                  />
-                  <KPIWidget
-                    kpi={{
-                      id: "default-efficiency",
-                      name: "Operational Efficiency",
-                      type: "efficiency",
-                      position: 5
-                    }}
-                    data={{
-                      value: "87.3%",
-                      change: 6.4,
-                      timestamp: new Date()
-                    }}
-                    position={4}
-                  />
-                </>
-              )}
-            </div>
+          <div className="p-6 space-y-8">
+            <DraggableKPIGrid
+              preferences={kpiPreferencesData?.preferences || []}
+              onCustomize={() => setIsKPISelectorOpen(true)}
+            />
 
-            {/* Detailed Analytics */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-              <RevenueChart data={kpiData} />
-              <ERPStatus systems={erpSystems.length > 0 ? erpSystems : systems} />
-            </div>
+            {/* Charts Section */}
+            <DraggableChartGrid
+              preferences={chartPreferences as any[]}
+              onAddChart={() => setIsChartSelectorOpen(true)}
+            />
           </div>
         </div>
 
@@ -255,6 +223,16 @@ export default function Dashboard() {
         isOpen={isERPModalOpen}
         onClose={() => setIsERPModalOpen(false)}
         systems={systems}
+      />
+
+      <KPISelector
+        open={isKPISelectorOpen}
+        onOpenChange={setIsKPISelectorOpen}
+      />
+
+      <ChartSelector
+        isOpen={isChartSelectorOpen}
+        onClose={() => setIsChartSelectorOpen(false)}
       />
     </div>
   );

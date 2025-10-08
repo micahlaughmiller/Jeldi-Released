@@ -8,7 +8,7 @@ import { analyzeERPData, generateKPIInsights } from "./services/openai";
 import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema, updateUserPreferencesSchema, insertUserPreferencesSchema, insertRoleSchema, updateRoleSchema, roleAssignmentSchema, roleRevocationSchema, insertPermissionSchema, insertOrganizationSchema, updateOrganizationSchema, insertOrganizationMemberSchema, updateOrganizationMemberSchema, organizationInviteSchema, organizationRoleAssignmentSchema, organizationMemberUpdateSchema, users, AuthUser } from "@shared/schema";
 
 // Type definitions
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import passport from "passport";
 import { OAuthService } from "./services/oauthService";
@@ -56,6 +56,45 @@ async function broadcastERPStatusUpdate(userId: string) {
       console.error('Error broadcasting ERP status update:', error);
     }
   }
+}
+
+// Helper function to get role-based default KPI types
+function getRoleBasedDefaultKPIs(role: string): string[] {
+  const defaults: Record<string, string[]> = {
+    admin: ['revenue', 'orders', 'inventory', 'performance', 'efficiency'],
+    finance: ['revenue', 'profit_margin', 'cash_flow', 'ar_aging', 'expenses'],
+    cfo: ['revenue', 'profit_margin', 'cash_flow', 'ar_aging', 'expenses'],
+    ops_manager: ['orders', 'inventory', 'performance', 'delivery_time', 'quality_score'],
+    project_manager: ['project_status', 'budget', 'timeline', 'resource_utilization', 'milestones'],
+    manager: ['revenue', 'orders', 'performance', 'inventory', 'efficiency'],
+    user: ['revenue', 'orders', 'performance'],
+  };
+  
+  return defaults[role] || defaults.user;
+}
+
+// Helper function to categorize KPI types
+function getCategoryForKpiType(type: string): string {
+  const categories: Record<string, string> = {
+    revenue: 'financial',
+    profit_margin: 'financial',
+    cash_flow: 'financial',
+    ar_aging: 'financial',
+    expenses: 'financial',
+    orders: 'operational',
+    inventory: 'operational',
+    delivery_time: 'operational',
+    quality_score: 'operational',
+    performance: 'performance',
+    efficiency: 'performance',
+    project_status: 'project',
+    budget: 'project',
+    timeline: 'project',
+    resource_utilization: 'project',
+    milestones: 'project',
+  };
+  
+  return categories[type] || 'other';
 }
 
 export async function registerRoutes(app: Express, options: { excludeWebSocket?: boolean } = {}): Promise<Server> {
@@ -1801,6 +1840,280 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.json({ message: "KPI deleted successfully" });
     } catch (error) {
       res.status(400).json({ message: "Failed to delete KPI", error: (error as Error).message });
+    }
+  }));
+
+  // Dashboard KPI Preferences routes
+  app.get("/api/dashboard/kpi-preferences", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const preferences = await storage.getDashboardKpiPreferences(req.user.id);
+      
+      // If no preferences exist, return role-based defaults
+      if (preferences.length === 0) {
+        const roleDefaults = getRoleBasedDefaultKPIs(req.user.role);
+        return res.json({ preferences: [], defaults: roleDefaults });
+      }
+      
+      // Fetch latest data for each KPI
+      const preferencesWithData = await Promise.all(
+        preferences.map(async (pref) => {
+          const latestData = await storage.getLatestKpiData(pref.kpiConfig.id);
+          return { ...pref, latestData };
+        })
+      );
+      
+      res.json({ preferences: preferencesWithData, defaults: [] });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch KPI preferences", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/dashboard/available-kpis", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const allKpis = await storage.getKpiConfigurations(req.user.id);
+      
+      // Group KPIs by category
+      const grouped = allKpis.reduce((acc, kpi) => {
+        const category = getCategoryForKpiType(kpi.type);
+        if (!acc[category]) acc[category] = [];
+        acc[category].push(kpi);
+        return acc;
+      }, {} as Record<string, any[]>);
+      
+      res.json(grouped);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch available KPIs", error: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/dashboard/kpi-preferences", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { kpiConfigIds } = req.body;
+      
+      if (!Array.isArray(kpiConfigIds) || kpiConfigIds.length === 0 || kpiConfigIds.length > 5) {
+        return res.status(400).json({ message: "Must select between 1 and 5 KPIs" });
+      }
+      
+      // Delete existing preferences
+      await storage.deleteAllUserKpiPreferences(req.user.id);
+      
+      // Create new preferences
+      const preferences = await Promise.all(
+        kpiConfigIds.map((kpiConfigId, index) =>
+          storage.createDashboardKpiPreference({
+            userId: req.user.id,
+            kpiConfigId,
+            position: index + 1,
+            isVisible: true,
+          })
+        )
+      );
+      
+      res.json({ preferences, message: "KPI preferences saved successfully" });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to save KPI preferences", error: (error as Error).message });
+    }
+  }));
+
+  app.put("/api/dashboard/kpi-preferences/reorder", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { positions } = req.body;
+      
+      if (!Array.isArray(positions)) {
+        return res.status(400).json({ message: "Invalid positions data" });
+      }
+      
+      await storage.updateKpiPositions(req.user.id, positions);
+      
+      res.json({ message: "KPI positions updated successfully" });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update KPI positions", error: (error as Error).message });
+    }
+  }));
+
+  // Dashboard Chart Preference routes
+  app.get("/api/dashboard/chart-preferences", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const preferences = await storage.getDashboardChartPreferences(req.user.id);
+      res.json(preferences);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch chart preferences", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/dashboard/available-charts", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const user = req.user;
+      const availableCharts = [
+        { id: 'revenue_90d', name: 'Revenue (90 Days)', category: 'financial', description: 'Track revenue over the last 90 days', icon: 'trending-up', defaultSize: 'large', roles: ['admin', 'finance', 'cfo', 'manager', 'user'] },
+        { id: 'unpaid_invoices', name: 'Unpaid Invoices', category: 'financial', description: 'Monitor outstanding invoice payments', icon: 'file-text', defaultSize: 'medium', roles: ['admin', 'finance', 'cfo', 'manager', 'user'] },
+        { id: 'refunds', name: 'Refunds', category: 'financial', description: 'View refund trends over time', icon: 'arrow-left', defaultSize: 'medium', roles: ['admin', 'finance', 'cfo', 'manager', 'user'] },
+        { id: 'cancellations', name: 'Cancellations', category: 'operational', description: 'Track order cancellations and churn', icon: 'x-circle', defaultSize: 'medium', roles: ['admin', 'ops_manager', 'manager', 'user'] },
+        { id: 'orders_over_time', name: 'Orders Over Time', category: 'operational', description: 'View order volume trends', icon: 'shopping-cart', defaultSize: 'large', roles: ['admin', 'ops_manager', 'user'] },
+        { id: 'cash_flow', name: 'Cash Flow', category: 'financial', description: 'Monitor cash inflows and outflows', icon: 'dollar-sign', defaultSize: 'large', roles: ['finance', 'cfo', 'admin'] },
+        { id: 'profit_margin', name: 'Profit Margin', category: 'financial', description: 'Track profit margin trends', icon: 'percent', defaultSize: 'medium', roles: ['finance', 'cfo', 'admin'] },
+        { id: 'ar_aging', name: 'AR Aging', category: 'financial', description: 'Accounts receivable aging report', icon: 'clock', defaultSize: 'large', roles: ['finance', 'cfo', 'admin'] },
+        { id: 'inventory_levels', name: 'Inventory Levels', category: 'operational', description: 'Monitor stock levels', icon: 'package', defaultSize: 'medium', roles: ['ops_manager', 'admin'] },
+        { id: 'delivery_performance', name: 'Delivery Performance', category: 'operational', description: 'Track delivery times and performance', icon: 'truck', defaultSize: 'medium', roles: ['ops_manager', 'admin'] },
+        { id: 'quality_metrics', name: 'Quality Metrics', category: 'operational', description: 'Monitor quality scores and metrics', icon: 'star', defaultSize: 'medium', roles: ['ops_manager', 'admin'] },
+        { id: 'project_timeline', name: 'Project Timeline', category: 'project', description: 'View project milestones and timeline', icon: 'calendar', defaultSize: 'large', roles: ['project_manager', 'admin'] },
+        { id: 'budget_vs_actual', name: 'Budget vs Actual', category: 'project', description: 'Compare budget to actual spend', icon: 'bar-chart', defaultSize: 'medium', roles: ['project_manager', 'admin'] },
+        { id: 'resource_utilization', name: 'Resource Utilization', category: 'project', description: 'Track resource allocation and usage', icon: 'users', defaultSize: 'medium', roles: ['project_manager', 'admin'] },
+      ];
+
+      // Filter charts based on user role
+      const userRole = user.role || 'user';
+      const filteredCharts = availableCharts.filter(chart => chart.roles.includes(userRole));
+
+      res.json(filteredCharts);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch available charts", error: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/dashboard/chart-preferences", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { chartType, size, configuration } = req.body;
+
+      if (!chartType) {
+        return res.status(400).json({ message: "Chart type is required" });
+      }
+
+      // Get current preferences to determine position
+      const existingPreferences = await storage.getDashboardChartPreferences(req.user.id);
+      const position = existingPreferences.length + 1;
+
+      const preference = await storage.createDashboardChartPreference({
+        userId: req.user.id,
+        chartType,
+        position,
+        size: size || 'medium',
+        isVisible: true,
+        configuration: configuration || null,
+      });
+
+      res.json(preference);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to add chart", error: (error as Error).message });
+    }
+  }));
+
+  app.put("/api/dashboard/chart-preferences/:id", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+
+      const updated = await storage.updateDashboardChartPreference(id, updates);
+
+      if (!updated) {
+        return res.status(404).json({ message: "Chart preference not found" });
+      }
+
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update chart", error: (error as Error).message });
+    }
+  }));
+
+  app.delete("/api/dashboard/chart-preferences/:id", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteDashboardChartPreference(id);
+
+      if (!deleted) {
+        return res.status(404).json({ message: "Chart preference not found" });
+      }
+
+      res.json({ message: "Chart deleted successfully" });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to delete chart", error: (error as Error).message });
+    }
+  }));
+
+  app.put("/api/dashboard/chart-preferences/reorder", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { positions } = req.body;
+
+      if (!Array.isArray(positions)) {
+        return res.status(400).json({ message: "Invalid positions data" });
+      }
+
+      await storage.updateChartPositions(req.user.id, positions);
+
+      res.json({ message: "Chart positions updated successfully" });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update chart positions", error: (error as Error).message });
+    }
+  }));
+
+  // Chart Data Endpoints
+  app.get("/api/charts/revenue-90d", authenticateToken, asAuth(async (req, res) => {
+    try {
+      // Mock data for revenue over 90 days
+      const data = Array.from({ length: 90 }, (_, i) => {
+        const date = new Date();
+        date.setDate(date.getDate() - (89 - i));
+        return {
+          date: date.toISOString().split('T')[0],
+          revenue: Math.floor(Math.random() * 50000) + 30000,
+          target: 45000,
+        };
+      });
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch revenue data", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/charts/unpaid-invoices", authenticateToken, asAuth(async (req, res) => {
+    try {
+      // Mock data for unpaid invoices
+      const data = [
+        { invoiceId: 'INV-001', customer: 'Acme Corp', amount: 12500, dueDate: '2025-01-15', daysOverdue: 23 },
+        { invoiceId: 'INV-002', customer: 'Global Industries', amount: 8750, dueDate: '2025-01-20', daysOverdue: 18 },
+        { invoiceId: 'INV-003', customer: 'Tech Solutions', amount: 15000, dueDate: '2025-01-25', daysOverdue: 13 },
+        { invoiceId: 'INV-004', customer: 'Retail Plus', amount: 5400, dueDate: '2025-02-01', daysOverdue: 6 },
+        { invoiceId: 'INV-005', customer: 'Manufacturing Co', amount: 22000, dueDate: '2025-02-05', daysOverdue: 2 },
+      ];
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch unpaid invoices", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/charts/refunds", authenticateToken, asAuth(async (req, res) => {
+    try {
+      // Mock data for refunds over time
+      const data = Array.from({ length: 30 }, (_, i) => {
+        const date = new Date();
+        date.setDate(date.getDate() - (29 - i));
+        return {
+          date: date.toISOString().split('T')[0],
+          refunds: Math.floor(Math.random() * 15) + 2,
+          amount: Math.floor(Math.random() * 5000) + 500,
+        };
+      });
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch refunds data", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/charts/cancellations", authenticateToken, asAuth(async (req, res) => {
+    try {
+      // Mock data for cancellations
+      const data = Array.from({ length: 30 }, (_, i) => {
+        const date = new Date();
+        date.setDate(date.getDate() - (29 - i));
+        return {
+          date: date.toISOString().split('T')[0],
+          cancellations: Math.floor(Math.random() * 20) + 5,
+          reason: ['Customer Request', 'Out of Stock', 'Payment Failed', 'Duplicate Order'][Math.floor(Math.random() * 4)],
+        };
+      });
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch cancellations data", error: (error as Error).message });
     }
   }));
 

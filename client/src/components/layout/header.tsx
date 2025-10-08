@@ -1,10 +1,11 @@
 interface HeaderProps {
   connectedCount: number;
   connectionStatus: "connected" | "connecting" | "disconnected";
-  onEmailClick: () => void;
+  onERPClick: () => void;
+  onAccountClick: () => void;
 }
 
-export default function Header({ connectedCount, connectionStatus, onEmailClick }: HeaderProps) {
+export default function Header({ connectedCount, connectionStatus, onERPClick, onAccountClick }: HeaderProps) {
   return (
     <header className="bg-card border-b border-border px-6 py-4" data-testid="header">
       <div className="flex items-center justify-between">
@@ -13,18 +14,6 @@ export default function Header({ connectedCount, connectionStatus, onEmailClick 
           <p className="text-sm text-muted-foreground">Monitor your enterprise performance across all ERP systems</p>
         </div>
         <div className="flex items-center space-x-4">
-          {/* Connection Status */}
-          <div className="flex items-center space-x-2" data-testid="connection-status">
-            <div className={`w-2 h-2 rounded-full ${
-              connectionStatus === "connected" ? "bg-chart-2 animate-pulse-dot" :
-              connectionStatus === "connecting" ? "bg-yellow-500 animate-pulse" :
-              "bg-red-500"
-            }`}></div>
-            <span className="text-sm text-muted-foreground">
-              {connectedCount} ERPs Connected
-            </span>
-          </div>
-          
           {/* Notification Bell */}
           <button 
             className="relative p-2 text-muted-foreground hover:text-foreground"
@@ -36,14 +25,30 @@ export default function Header({ connectedCount, connectionStatus, onEmailClick 
             </span>
           </button>
           
-          {/* Email Button */}
-          <button 
-            className="flex items-center space-x-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity"
-            onClick={onEmailClick}
-            data-testid="button-compose-email"
+          {/* ERP Connection Status - Moved to top-right */}
+          <button
+            onClick={onERPClick}
+            className="flex items-center space-x-2 px-3 py-2 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+            data-testid="button-erp-status"
           >
-            <i className="fas fa-envelope text-sm"></i>
-            <span>Compose</span>
+            <div className={`w-2 h-2 rounded-full ${
+              connectionStatus === "connected" ? "bg-chart-2 animate-pulse-dot" :
+              connectionStatus === "connecting" ? "bg-yellow-500 animate-pulse" :
+              "bg-red-500"
+            }`}></div>
+            <span className="text-sm font-medium">
+              {connectedCount} ERP{connectedCount !== 1 ? 's' : ''}
+            </span>
+            <i className="fas fa-chevron-down text-xs text-muted-foreground"></i>
+          </button>
+          
+          {/* Account Icon */}
+          <button
+            onClick={onAccountClick}
+            className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary/20 transition-colors"
+            data-testid="button-account"
+          >
+            <i className="fas fa-user"></i>
           </button>
         </div>
       </div>

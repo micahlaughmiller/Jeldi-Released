@@ -1,9 +1,11 @@
 import { 
-  users, erpConnections, kpiConfigurations, kpiData, emailConfigurations, chatHistory, oauthSessions, userPreferences,
+  users, erpConnections, kpiConfigurations, kpiData, dashboardKpiPreferences, dashboardChartPreferences, emailConfigurations, chatHistory, oauthSessions, userPreferences,
   conversations, queryTemplates, favoriteQueries, roles, permissions, userRoles, rolePermissions, auditLog,
   organizations, organizationMembers,
   type User, type InsertUser, type InsertOAuthUser, type ErpConnection, type InsertErpConnection,
   type KpiConfiguration, type InsertKpiConfiguration, type KpiData, type InsertKpiData,
+  type DashboardKpiPreference, type InsertDashboardKpiPreference, type UpdateDashboardKpiPreference,
+  type DashboardChartPreference, type InsertDashboardChartPreference, type UpdateDashboardChartPreference,
   type EmailConfiguration, type InsertEmailConfiguration, type ChatHistory, type InsertChatHistory,
   type OAuthSession, type InsertOAuthSession, type UserPreferences, type InsertUserPreferences, type UpdateUserPreferences,
   type Conversation, type InsertConversation, type QueryTemplate, type InsertQueryTemplate,
@@ -53,6 +55,22 @@ export interface IStorage {
   getLatestKpiData(kpiId: string): Promise<KpiData | undefined>;
   createKpiData(data: InsertKpiData): Promise<KpiData>;
   getKpiDataHistory(kpiId: string, limit?: number): Promise<KpiData[]>;
+
+  // Dashboard KPI Preference operations
+  getDashboardKpiPreferences(userId: string): Promise<(DashboardKpiPreference & { kpiConfig: KpiConfiguration })[]>;
+  createDashboardKpiPreference(preference: InsertDashboardKpiPreference): Promise<DashboardKpiPreference>;
+  updateDashboardKpiPreference(id: string, updates: UpdateDashboardKpiPreference): Promise<DashboardKpiPreference | undefined>;
+  deleteDashboardKpiPreference(id: string): Promise<boolean>;
+  deleteAllUserKpiPreferences(userId: string): Promise<void>;
+  updateKpiPositions(userId: string, positions: { id: string; position: number }[]): Promise<void>;
+
+  // Dashboard Chart Preference operations
+  getDashboardChartPreferences(userId: string): Promise<DashboardChartPreference[]>;
+  createDashboardChartPreference(preference: InsertDashboardChartPreference): Promise<DashboardChartPreference>;
+  updateDashboardChartPreference(id: string, updates: UpdateDashboardChartPreference): Promise<DashboardChartPreference | undefined>;
+  deleteDashboardChartPreference(id: string): Promise<boolean>;
+  deleteAllUserChartPreferences(userId: string): Promise<void>;
+  updateChartPositions(userId: string, positions: { id: string; position: number }[]): Promise<void>;
 
   // Email Configuration operations
   getEmailConfigurations(userId: string): Promise<EmailConfiguration[]>;
@@ -282,6 +300,102 @@ export class DatabaseStorage implements IStorage {
       .where(eq(kpiData.kpiId, kpiId))
       .orderBy(desc(kpiData.timestamp))
       .limit(limit);
+  }
+
+  async getDashboardKpiPreferences(userId: string): Promise<(DashboardKpiPreference & { kpiConfig: KpiConfiguration })[]> {
+    const preferences = await db.select({
+      id: dashboardKpiPreferences.id,
+      userId: dashboardKpiPreferences.userId,
+      kpiConfigId: dashboardKpiPreferences.kpiConfigId,
+      position: dashboardKpiPreferences.position,
+      isVisible: dashboardKpiPreferences.isVisible,
+      createdAt: dashboardKpiPreferences.createdAt,
+      updatedAt: dashboardKpiPreferences.updatedAt,
+      kpiConfig: kpiConfigurations,
+    })
+      .from(dashboardKpiPreferences)
+      .innerJoin(kpiConfigurations, eq(dashboardKpiPreferences.kpiConfigId, kpiConfigurations.id))
+      .where(eq(dashboardKpiPreferences.userId, userId))
+      .orderBy(dashboardKpiPreferences.position);
+    
+    return preferences;
+  }
+
+  async createDashboardKpiPreference(preference: InsertDashboardKpiPreference): Promise<DashboardKpiPreference> {
+    const [created] = await db.insert(dashboardKpiPreferences).values(preference).returning();
+    return created;
+  }
+
+  async updateDashboardKpiPreference(id: string, updates: UpdateDashboardKpiPreference): Promise<DashboardKpiPreference | undefined> {
+    const [updated] = await db.update(dashboardKpiPreferences)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(dashboardKpiPreferences.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteDashboardKpiPreference(id: string): Promise<boolean> {
+    const result = await db.delete(dashboardKpiPreferences)
+      .where(eq(dashboardKpiPreferences.id, id));
+    return result.rowCount ? result.rowCount > 0 : false;
+  }
+
+  async deleteAllUserKpiPreferences(userId: string): Promise<void> {
+    await db.delete(dashboardKpiPreferences)
+      .where(eq(dashboardKpiPreferences.userId, userId));
+  }
+
+  async updateKpiPositions(userId: string, positions: { id: string; position: number }[]): Promise<void> {
+    for (const { id, position } of positions) {
+      await db.update(dashboardKpiPreferences)
+        .set({ position, updatedAt: new Date() })
+        .where(and(
+          eq(dashboardKpiPreferences.id, id),
+          eq(dashboardKpiPreferences.userId, userId)
+        ));
+    }
+  }
+
+  async getDashboardChartPreferences(userId: string): Promise<DashboardChartPreference[]> {
+    return await db.select()
+      .from(dashboardChartPreferences)
+      .where(eq(dashboardChartPreferences.userId, userId))
+      .orderBy(dashboardChartPreferences.position);
+  }
+
+  async createDashboardChartPreference(preference: InsertDashboardChartPreference): Promise<DashboardChartPreference> {
+    const [created] = await db.insert(dashboardChartPreferences).values(preference).returning();
+    return created;
+  }
+
+  async updateDashboardChartPreference(id: string, updates: UpdateDashboardChartPreference): Promise<DashboardChartPreference | undefined> {
+    const [updated] = await db.update(dashboardChartPreferences)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(dashboardChartPreferences.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteDashboardChartPreference(id: string): Promise<boolean> {
+    const result = await db.delete(dashboardChartPreferences)
+      .where(eq(dashboardChartPreferences.id, id));
+    return result.rowCount ? result.rowCount > 0 : false;
+  }
+
+  async deleteAllUserChartPreferences(userId: string): Promise<void> {
+    await db.delete(dashboardChartPreferences)
+      .where(eq(dashboardChartPreferences.userId, userId));
+  }
+
+  async updateChartPositions(userId: string, positions: { id: string; position: number }[]): Promise<void> {
+    for (const { id, position } of positions) {
+      await db.update(dashboardChartPreferences)
+        .set({ position, updatedAt: new Date() })
+        .where(and(
+          eq(dashboardChartPreferences.id, id),
+          eq(dashboardChartPreferences.userId, userId)
+        ));
+    }
   }
 
   async getEmailConfigurations(userId: string): Promise<EmailConfiguration[]> {

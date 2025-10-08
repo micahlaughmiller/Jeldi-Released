@@ -53,6 +53,28 @@ export const kpiData = pgTable("kpi_data", {
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
+export const dashboardKpiPreferences = pgTable("dashboard_kpi_preferences", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  kpiConfigId: uuid("kpi_config_id").references(() => kpiConfigurations.id).notNull(),
+  position: integer("position").notNull(), // 1-5
+  isVisible: boolean("is_visible").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const dashboardChartPreferences = pgTable("dashboard_chart_preferences", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  chartType: text("chart_type").notNull(), // revenue_90d, unpaid_invoices, refunds, cancellations, orders_over_time, cash_flow, profit_margin, ar_aging, inventory_levels, delivery_performance, quality_metrics, project_timeline, budget_vs_actual, resource_utilization
+  position: integer("position").notNull(), // ordering on dashboard
+  size: text("size").default("medium").notNull(), // small, medium, large
+  isVisible: boolean("is_visible").default(true).notNull(),
+  configuration: jsonb("configuration"), // Chart-specific settings like date range, filters, etc.
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const emailConfigurations = pgTable("email_configurations", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: uuid("user_id").references(() => users.id).notNull(),
@@ -247,6 +269,7 @@ export const auditLog = pgTable("audit_log", {
 export const userRelations = relations(users, ({ many, one }) => ({
   erpConnections: many(erpConnections),
   kpiConfigurations: many(kpiConfigurations),
+  dashboardKpiPreferences: many(dashboardKpiPreferences),
   emailConfigurations: many(emailConfigurations),
   conversations: many(conversations),
   chatHistory: many(chatHistory),
@@ -328,6 +351,17 @@ export const kpiConfigurationRelations = relations(kpiConfigurations, ({ one, ma
 export const kpiDataRelations = relations(kpiData, ({ one }) => ({
   kpi: one(kpiConfigurations, {
     fields: [kpiData.kpiId],
+    references: [kpiConfigurations.id],
+  }),
+}));
+
+export const dashboardKpiPreferencesRelations = relations(dashboardKpiPreferences, ({ one }) => ({
+  user: one(users, {
+    fields: [dashboardKpiPreferences.userId],
+    references: [users.id],
+  }),
+  kpiConfig: one(kpiConfigurations, {
+    fields: [dashboardKpiPreferences.kpiConfigId],
     references: [kpiConfigurations.id],
   }),
 }));
@@ -437,6 +471,26 @@ export const insertKpiDataSchema = createInsertSchema(kpiData).omit({
   id: true,
   timestamp: true,
 });
+
+export const insertDashboardKpiPreferenceSchema = createInsertSchema(dashboardKpiPreferences).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateDashboardKpiPreferenceSchema = insertDashboardKpiPreferenceSchema.omit({
+  userId: true,
+}).partial();
+
+export const insertDashboardChartPreferenceSchema = createInsertSchema(dashboardChartPreferences).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateDashboardChartPreferenceSchema = insertDashboardChartPreferenceSchema.omit({
+  userId: true,
+}).partial();
 
 export const insertEmailConfigurationSchema = createInsertSchema(emailConfigurations).omit({
   id: true,
@@ -555,6 +609,12 @@ export type InsertKpiConfiguration = z.infer<typeof insertKpiConfigurationSchema
 export type KpiConfiguration = typeof kpiConfigurations.$inferSelect;
 export type InsertKpiData = z.infer<typeof insertKpiDataSchema>;
 export type KpiData = typeof kpiData.$inferSelect;
+export type InsertDashboardKpiPreference = z.infer<typeof insertDashboardKpiPreferenceSchema>;
+export type UpdateDashboardKpiPreference = z.infer<typeof updateDashboardKpiPreferenceSchema>;
+export type DashboardKpiPreference = typeof dashboardKpiPreferences.$inferSelect;
+export type InsertDashboardChartPreference = z.infer<typeof insertDashboardChartPreferenceSchema>;
+export type UpdateDashboardChartPreference = z.infer<typeof updateDashboardChartPreferenceSchema>;
+export type DashboardChartPreference = typeof dashboardChartPreferences.$inferSelect;
 export type InsertEmailConfiguration = z.infer<typeof insertEmailConfigurationSchema>;
 export type EmailConfiguration = typeof emailConfigurations.$inferSelect;
 export type InsertOAuthSession = z.infer<typeof insertOAuthSessionSchema>;

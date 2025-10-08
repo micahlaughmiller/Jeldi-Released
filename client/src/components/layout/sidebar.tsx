@@ -83,13 +83,6 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
           </a>
         </Link>
         
-        <Link href="/email">
-          <a className="flex items-center space-x-3 px-3 py-2 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
-            <i className="fas fa-envelope w-4"></i>
-            <span>Email Center</span>
-          </a>
-        </Link>
-        
         <Link href="/ai-assistant">
           <a 
             className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
