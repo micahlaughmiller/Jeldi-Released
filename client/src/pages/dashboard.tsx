@@ -69,13 +69,13 @@ export default function Dashboard() {
   const initializeDefaultCharts = useMutation({
     mutationFn: async (role: string) => {
       const defaultChartsByRole: Record<string, string[]> = {
-        admin: ['revenue_90d', 'unpaid_invoices', 'refunds', 'cancellations'],
-        finance: ['revenue_90d', 'unpaid_invoices', 'cash_flow', 'profit_margin'],
-        cfo: ['revenue_90d', 'unpaid_invoices', 'cash_flow', 'ar_aging'],
-        ops_manager: ['orders_over_time', 'inventory_levels', 'delivery_performance', 'quality_metrics'],
-        project_manager: ['project_timeline', 'budget_vs_actual', 'resource_utilization'],
-        manager: ['revenue_90d', 'unpaid_invoices', 'refunds', 'cancellations'],
-        user: ['revenue_90d', 'unpaid_invoices', 'refunds', 'cancellations'],
+        admin: ['cashflow_90d_60d_projected'],
+        finance: ['cashflow_90d_60d_projected'],
+        cfo: ['cashflow_90d_60d_projected'],
+        ops_manager: ['cashflow_90d_60d_projected'],
+        project_manager: ['cashflow_90d_60d_projected'],
+        manager: ['cashflow_90d_60d_projected'],
+        user: ['cashflow_90d_60d_projected'],
       };
 
       const defaultCharts = defaultChartsByRole[role] || defaultChartsByRole.user;
@@ -84,7 +84,7 @@ export default function Dashboard() {
       for (let i = 0; i < defaultCharts.length; i++) {
         await apiRequest("POST", "/api/dashboard/chart-preferences", {
           chartType: defaultCharts[i],
-          size: i === 0 ? 'large' : 'medium',
+          size: 'large',
         });
       }
     },
