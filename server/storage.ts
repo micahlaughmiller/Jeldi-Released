@@ -18,7 +18,7 @@ import {
   type OrganizationWithMembers, type UserWithOrganizations, type OrganizationMemberWithUser
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, or } from "drizzle-orm";
 import { encryptionService } from "./services/encryptionService";
 
 export interface IStorage {
@@ -331,16 +331,17 @@ export class DatabaseStorage implements IStorage {
     return newConfig;
   }
 
-  async updateKpiConfiguration(id: string, updates: Partial<KpiConfiguration>): Promise<KpiConfiguration | undefined> {
+  async updateKpiConfiguration(id: string, updates: Partial<KpiConfiguration>, userId?: string): Promise<KpiConfiguration | undefined> {
     const [updated] = await db.update(kpiConfigurations)
       .set(updates)
-      .where(eq(kpiConfigurations.id, id))
+      .where(userId ? and(eq(kpiConfigurations.id, id), eq(kpiConfigurations.userId, userId)) : eq(kpiConfigurations.id, id))
       .returning();
     return updated || undefined;
   }
 
-  async deleteKpiConfiguration(id: string): Promise<boolean> {
-    const result = await db.delete(kpiConfigurations).where(eq(kpiConfigurations.id, id));
+  async deleteKpiConfiguration(id: string, userId?: string): Promise<boolean> {
+    const result = await db.delete(kpiConfigurations)
+      .where(userId ? and(eq(kpiConfigurations.id, id), eq(kpiConfigurations.userId, userId)) : eq(kpiConfigurations.id, id));
     return (result.rowCount || 0) > 0;
   }
 
@@ -396,9 +397,9 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteDashboardKpiPreference(id: string): Promise<boolean> {
+  async deleteDashboardKpiPreference(id: string, userId?: string): Promise<boolean> {
     const result = await db.delete(dashboardKpiPreferences)
-      .where(eq(dashboardKpiPreferences.id, id));
+      .where(userId ? and(eq(dashboardKpiPreferences.id, id), eq(dashboardKpiPreferences.userId, userId)) : eq(dashboardKpiPreferences.id, id));
     return result.rowCount ? result.rowCount > 0 : false;
   }
 
@@ -430,17 +431,17 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateDashboardChartPreference(id: string, updates: UpdateDashboardChartPreference): Promise<DashboardChartPreference | undefined> {
+  async updateDashboardChartPreference(id: string, updates: UpdateDashboardChartPreference, userId?: string): Promise<DashboardChartPreference | undefined> {
     const [updated] = await db.update(dashboardChartPreferences)
       .set({ ...updates, updatedAt: new Date() })
-      .where(eq(dashboardChartPreferences.id, id))
+      .where(userId ? and(eq(dashboardChartPreferences.id, id), eq(dashboardChartPreferences.userId, userId)) : eq(dashboardChartPreferences.id, id))
       .returning();
     return updated;
   }
 
-  async deleteDashboardChartPreference(id: string): Promise<boolean> {
+  async deleteDashboardChartPreference(id: string, userId?: string): Promise<boolean> {
     const result = await db.delete(dashboardChartPreferences)
-      .where(eq(dashboardChartPreferences.id, id));
+      .where(userId ? and(eq(dashboardChartPreferences.id, id), eq(dashboardChartPreferences.userId, userId)) : eq(dashboardChartPreferences.id, id));
     return result.rowCount ? result.rowCount > 0 : false;
   }
 
@@ -630,10 +631,11 @@ export class DatabaseStorage implements IStorage {
     return newTemplate;
   }
 
-  async updateQueryTemplateUsage(id: string): Promise<void> {
+  async updateQueryTemplateUsage(id: string, userId?: string): Promise<void> {
+    // system templates are shared; user templates only count for their owner
     await db.update(queryTemplates)
       .set({ usageCount: sql`${queryTemplates.usageCount} + 1` })
-      .where(eq(queryTemplates.id, id));
+      .where(userId ? and(eq(queryTemplates.id, id), or(eq(queryTemplates.isSystem, true), eq(queryTemplates.userId, userId))) : eq(queryTemplates.id, id));
   }
 
   // Favorite Query operations
@@ -654,15 +656,16 @@ export class DatabaseStorage implements IStorage {
     return newFavorite;
   }
 
-  async deleteFavoriteQuery(id: string): Promise<boolean> {
-    const result = await db.delete(favoriteQueries).where(eq(favoriteQueries.id, id));
+  async deleteFavoriteQuery(id: string, userId?: string): Promise<boolean> {
+    const result = await db.delete(favoriteQueries)
+      .where(userId ? and(eq(favoriteQueries.id, id), eq(favoriteQueries.userId, userId)) : eq(favoriteQueries.id, id));
     return (result.rowCount || 0) > 0;
   }
 
-  async updateFavoriteQueryUsage(id: string): Promise<void> {
+  async updateFavoriteQueryUsage(id: string, userId?: string): Promise<void> {
     await db.update(favoriteQueries)
       .set({ usageCount: sql`${favoriteQueries.usageCount} + 1` })
-      .where(eq(favoriteQueries.id, id));
+      .where(userId ? and(eq(favoriteQueries.id, id), eq(favoriteQueries.userId, userId)) : eq(favoriteQueries.id, id));
   }
 
   // User Preferences operations

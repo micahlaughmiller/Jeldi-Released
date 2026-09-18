@@ -89,8 +89,9 @@ export class OAuthService {
     return true;
   }
 
-  static async getCompletedOAuthSession(sessionId: string): Promise<any> {
-    const session = await storage.getOAuthSession(sessionId);
+  static async getCompletedOAuthSession(state: string): Promise<any> {
+    // The callback redirect carries the CSRF state, not the row id
+    const session = await storage.getOAuthSessionByState(state);
     if (!session || !session.isCompleted) {
       return null;
     }
@@ -205,10 +206,18 @@ export class OAuthService {
       throw new Error("Invalid OAuth profile data");
     }
 
-    // Check if user exists by email or OAuth ID
-    let user = await storage.getUserByEmail(email);
+    // Prefer the provider's stable id. Only fall back to email when the provider vouches for it,
+    // otherwise an unverified address could take over an existing local account.
+    const emailVerified: boolean = provider === "google"
+      ? Boolean(profile.emails?.[0]?.verified ?? profile._json?.email_verified)
+      : true; // Microsoft identities are tenant-verified
+    let user = await storage.getUserByOAuthId(provider, oauthId);
     if (!user) {
-      user = await storage.getUserByOAuthId(provider, oauthId);
+      const byEmail = await storage.getUserByEmail(email);
+      if (byEmail && !emailVerified) {
+        throw new Error("This email address is not verified by the identity provider");
+      }
+      user = byEmail;
     }
 
     if (user) {

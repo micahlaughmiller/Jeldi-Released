@@ -2,6 +2,11 @@ import { db } from "../db";
 import { users, erpConnections, kpiConfigurations, kpiData, dashboardKpiPreferences, dashboardChartPreferences } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
+import crypto from "crypto";
+
+// Demo accounts share one password. Set DEMO_USER_PASSWORD to make it known; otherwise a
+// random one is generated per process (the demo-login endpoint does not need it).
+const DEMO_PASSWORD = process.env.DEMO_USER_PASSWORD || `Demo-${crypto.randomBytes(12).toString("base64url")}!1a`;
 
 /**
  * Demo Data Generation Service
@@ -18,19 +23,19 @@ import bcrypt from "bcrypt";
 export const DEMO_USERS = [
   {
     email: "cfo@demo.jeldi.app",
-    password: "DemoPassword123!",
+    password: DEMO_PASSWORD,
     name: "Sarah CFO",
     role: "cfo" as const,
   },
   {
     email: "coo@demo.jeldi.app",
-    password: "DemoPassword123!",
+    password: DEMO_PASSWORD,
     name: "James COO",
-    role: "coo" as const,
+    role: "ops_manager" as const,
   },
   {
     email: "admin@demo.jeldi.app",
-    password: "DemoPassword123!",
+    password: DEMO_PASSWORD,
     name: "Admin User",
     role: "admin" as const,
   },
@@ -192,10 +197,10 @@ export const DEMO_CHARTS = [
  * Check if current environment is demo.jeldi.app
  */
 export function isDemoEnvironment(): boolean {
-  const hostname = process.env.HOSTNAME || '';
-  const domain = process.env.AWS_DOMAIN || '';
-  
-  return hostname === 'demo.jeldi.app' || domain === 'demo.jeldi.app';
+  // DEMO_MODE=true is the explicit switch. AWS_DOMAIN=demo.jeldi.app is kept for the existing deployment.
+  if (process.env.DEMO_MODE === 'true') return true;
+  if (process.env.DEMO_MODE === 'false') return false;
+  return (process.env.AWS_DOMAIN || '') === 'demo.jeldi.app';
 }
 
 /**
@@ -275,7 +280,7 @@ export async function initializeDemoERPConnections(demoUsers: any[]) {
           .from(erpConnections)
           .where(eq(erpConnections.userId, user.id));
 
-        const hasExisting = existing.some((e: any) => e.erpSystem === erpSystem.name);
+        const hasExisting = existing.some((e: any) => e.erpSystem === erpSystem.type);
 
         if (hasExisting) {
           console.log(`Demo ERP ${erpSystem.name} for ${user.email} already exists, skipping`);
@@ -285,7 +290,7 @@ export async function initializeDemoERPConnections(demoUsers: any[]) {
         // Create demo ERP connection
         await db.insert(erpConnections).values({
           userId: user.id,
-          erpSystem: erpSystem.name,
+          erpSystem: erpSystem.type, // must match the ERP_SYSTEMS key, not the display name
           isConnected: true,
           config: erpSystem.config as any,
           connectionType: 'custom',

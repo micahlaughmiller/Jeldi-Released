@@ -2,10 +2,13 @@ import type { Express, RequestHandler, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
+import { db } from "./db";
+import { isDemoEnvironment } from "./services/demo-data";
+import { sql } from "drizzle-orm";
 import { erpService } from "./services/erpService";
 import { emailService } from "./services/emailService";
 import { analyzeERPData, generateKPIInsights } from "./services/openai";
-import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema, updateUserPreferencesSchema, insertUserPreferencesSchema, insertRoleSchema, updateRoleSchema, roleAssignmentSchema, roleRevocationSchema, insertPermissionSchema, insertOrganizationSchema, updateOrganizationSchema, insertOrganizationMemberSchema, updateOrganizationMemberSchema, organizationInviteSchema, organizationRoleAssignmentSchema, organizationMemberUpdateSchema, users, AuthUser } from "@shared/schema";
+import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema, emailSendRequestSchema, smtpConfigRequestSchema, emailProviderParamsSchema, updateUserPreferencesSchema, insertUserPreferencesSchema, insertRoleSchema, updateRoleSchema, roleAssignmentSchema, roleRevocationSchema, insertPermissionSchema, insertOrganizationSchema, updateOrganizationSchema, insertOrganizationMemberSchema, updateOrganizationMemberSchema, organizationInviteSchema, organizationRoleAssignmentSchema, organizationMemberUpdateSchema, users, AuthUser, type ErpConnection } from "@shared/schema";
 
 // Type definitions
 import bcrypt from "bcrypt";
@@ -19,8 +22,10 @@ import { sessionService } from "./services/sessionService";
 import { passwordPolicyService } from "./services/passwordPolicyService";
 
 // Type helper to convert AuthenticatedRequest handlers to standard RequestHandler
-const asAuth = (h: (req: AuthenticatedRequest, res: Response, next: NextFunction) => any): RequestHandler => 
-  (req, res, next) => h(req as AuthenticatedRequest, res, next);
+// authenticateToken always runs before these handlers, so req.user is present
+type AuthedRequest = AuthenticatedRequest & { user: AuthUser };
+const asAuth = (h: (req: AuthedRequest, res: Response, next: NextFunction) => any): RequestHandler => 
+  (req, res, next) => h(req as AuthedRequest, res, next);
 
 // JWT_SECRET accessed at runtime, not import-time
 const getJwtSecretAtRuntime = () => getJwtSecret();
@@ -31,20 +36,16 @@ interface WSClient {
   user: AuthUser;
   permissions: string[];
 }
-const wsClients = new Map<string, WSClient>();
+const wsClients = new Map<string, WSClient[]>(); // a user may have several tabs open
 
 // Helper function to broadcast ERP status updates with permission check
 async function broadcastERPStatusUpdate(userId: string) {
-  const wsClient = wsClients.get(userId);
-  if (wsClient && wsClient.ws.readyState === WebSocket.OPEN) {
-    // Check if user has permission to view ERP data
-    if (!wsClient.permissions.includes('erp_connections.read')) {
-      return; // Skip sending data if user lacks permission
-    }
-    
+  const clients = (wsClients.get(userId) || []).filter(c => c.ws.readyState === WebSocket.OPEN && c.permissions.includes('erp_connections.read'));
+  if (clients.length === 0) return;
+  {
     try {
       const systems = await erpService.getConnectedSystems(userId);
-      wsClient.ws.send(JSON.stringify({
+      const payload = JSON.stringify({
         type: 'erp_status_update',
         data: systems.map(system => ({
           name: system.name,
@@ -54,7 +55,8 @@ async function broadcastERPStatusUpdate(userId: string) {
           lastSync: system.lastSync,
           status: system.isConnected ? "active" : "inactive"
         }))
-      }));
+      });
+      for (const c of clients) c.ws.send(payload);
     } catch (error) {
       console.error('Error broadcasting ERP status update:', error);
     }
@@ -427,11 +429,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // Demo auto-login endpoint (only works on demo.jeldi.app)
   app.post("/api/auth/demo-login", async (req, res) => {
     try {
-      const hostname = req.headers.host || '';
-      const isDemoEnv = hostname.includes('demo.jeldi.app');
-      
-      if (!isDemoEnv) {
-        return res.status(403).json({ message: "Demo login only available on demo.jeldi.app" });
+      if (!isDemoEnvironment()) {
+        return res.status(403).json({ message: "Demo login is only available on the demo deployment" });
       }
 
       // Login as demo CFO user
@@ -491,12 +490,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   });
   
   // OAuth environment configuration endpoint (for debugging and validation)
-  app.get("/api/oauth/config", authenticateToken, asAuth(async (req, res) => {
+  app.get("/api/oauth/config", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
-      // Only allow admins to view OAuth configuration
-      if (req.user.role !== 'admin') {
-        return res.status(403).json({ message: "Admin access required" });
-      }
       
       const oauthConfig = OAuthService.getEnvironmentConfig();
       const emailConfig = emailService.getEnvironmentConfig();
@@ -689,12 +684,13 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
       
       // For OAuth users, password change is not allowed
-      if (req.user.authProvider !== "local" || !req.user.password) {
+      const fullUser = await storage.getUser(req.user.id);
+      if (!fullUser || fullUser.authProvider !== "local" || !fullUser.password) {
         return res.status(400).json({ message: "Password change not available for OAuth accounts" });
       }
-      
+
       // Verify current password
-      const isValidCurrentPassword = await bcrypt.compare(currentPassword, req.user.password);
+      const isValidCurrentPassword = await bcrypt.compare(currentPassword, fullUser.password);
       if (!isValidCurrentPassword) {
         return res.status(400).json({ message: "Current password is incorrect" });
       }
@@ -793,6 +789,34 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
+  // Connection records without credential fields; the client only needs status/metadata
+  const sanitizeErpConnection = (c: ErpConnection) => {
+    const { accessToken, refreshToken, apiKey, apiSecret, ...safe } = c;
+    return { ...safe, hasCredentials: Boolean(accessToken || apiKey || apiSecret) };
+  };
+
+  app.get("/api/erp/connections", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
+    try {
+      const connections = await storage.getErpConnections(req.user.id);
+      res.json(connections.map(sanitizeErpConnection));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch ERP connections", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/erp/connections/:id", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
+    try {
+      const connections = await storage.getErpConnections(req.user.id);
+      const connection = connections.find(c => c.id === req.params.id);
+      if (!connection) {
+        return res.status(404).json({ message: "ERP connection not found" });
+      }
+      res.json(sanitizeErpConnection(connection));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch ERP connection", error: (error as Error).message });
+    }
+  }));
+
   app.post("/api/erp/connect/:system", authenticateToken, requirePermission("erp_connections", "create"), asAuth(async (req, res) => {
     try {
       const { system } = req.params;
@@ -848,7 +872,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
-  app.post("/api/erp/test-connection", authenticateToken, requirePermission("erp_connections", "write"), asAuth(async (req, res) => {
+  app.post("/api/erp/test-connection", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
     try {
       const { apiBaseUrl, authMethod, apiKey, apiSecret, accessToken, instanceUrl, erpSystem } = req.body;
       
@@ -872,13 +896,23 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
-  app.put("/api/erp/config/:id", authenticateToken, requirePermission("erp_connections", "write"), asAuth(async (req, res) => {
+  app.put("/api/erp/config/:id", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
     try {
       const { id } = req.params;
-      const updates = req.body;
-      
+      const owned = (await storage.getErpConnections(req.user.id)).find(c => c.id === id);
+      if (!owned) {
+        return res.status(404).json({ message: "Connection not found" });
+      }
+
+      // Only connection settings may be edited through this endpoint
+      const allowed = ["instanceUrl", "apiKey", "apiSecret", "authMethod", "connectionType", "config", "metadata"] as const;
+      const updates: Partial<ErpConnection> = {};
+      for (const key of allowed) {
+        if (req.body[key] !== undefined) (updates as any)[key] = req.body[key];
+      }
+
       const updatedConnection = await storage.updateErpConnection(id, updates);
-      
+
       if (!updatedConnection) {
         return res.status(404).json({ message: "Connection not found" });
       }
@@ -901,7 +935,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
-  app.post("/api/erp/connect-api-key", authenticateToken, requirePermission("erp_connections", "write"), asAuth(async (req, res) => {
+  app.post("/api/erp/connect-api-key", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
     try {
       const { erpSystem, apiKey, apiSecret, instanceUrl } = req.body;
       
@@ -921,7 +955,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
-  app.post("/api/erp/connect-custom", authenticateToken, requirePermission("erp_connections", "write"), asAuth(async (req, res) => {
+  app.post("/api/erp/connect-custom", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
     try {
       const { customName, apiBaseUrl, authMethod, credentials, metadata } = req.body;
       
@@ -1003,7 +1037,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // First check if storage has method (might not exist in all implementations)
       if (typeof (storage as any).getAllUsersWithRoles === 'function') {
         const users = await (storage as any).getAllUsersWithRoles();
-        res.json(users);
+        res.json(users.map((u: any) => ({ ...u, password: undefined })));
       } else {
         // Fallback: basic implementation using existing methods
         // Note: This is not efficient for large user bases
@@ -1033,8 +1067,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // Assign role to user (admin only)
   app.post("/api/rbac/assign-role", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
-      const { userId, roleId } = roleAssignmentSchema.parse(req.body);
-      
+      const body = { ...req.body };
+      if (typeof body.userId === "string" && body.userId.includes("@")) {
+        const target = await storage.getUserByEmail(body.userId);
+        if (!target) return res.status(404).json({ message: "No user with that email" });
+        body.userId = target.id;
+      }
+      const { userId, roleId } = roleAssignmentSchema.parse(body);
+
       const userRole = await storage.assignRoleToUser(userId, roleId, req.user!.id);
       
       await RBACService.logAuditEvent({
@@ -1057,7 +1097,13 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // Revoke role from user (admin only)
   app.delete("/api/rbac/revoke-role", authenticateToken, requireAdmin, asAuth(async (req, res) => {
     try {
-      const { userId, roleId } = roleRevocationSchema.parse(req.body);
+      const body = { ...req.body };
+      if (typeof body.userId === "string" && body.userId.includes("@")) {
+        const target = await storage.getUserByEmail(body.userId);
+        if (!target) return res.status(404).json({ message: "No user with that email" });
+        body.userId = target.id;
+      }
+      const { userId, roleId } = roleRevocationSchema.parse(body);
       
       const success = await storage.revokeRoleFromUser(userId, roleId);
       
@@ -1201,7 +1247,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
       // Check if user is a member or admin
       const member = await storage.getOrganizationMember(id, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!member && !isAdmin) {
         return res.status(403).json({ message: "Access denied" });
@@ -1273,7 +1319,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(id, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
         return res.status(403).json({ message: "Only organization owners or admins can update organizations" });
@@ -1310,7 +1356,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(id, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
         return res.status(403).json({ message: "Only organization owners or admins can delete organizations" });
@@ -1346,7 +1392,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // Check if user is a member or admin
       const member = await storage.getOrganizationMember(id, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!member && !isAdmin) {
         return res.status(403).json({ message: "Access denied" });
@@ -1371,7 +1417,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(id, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
         return res.status(403).json({ message: "Only organization owners or admins can add members" });
@@ -1404,7 +1450,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(orgId, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
         return res.status(403).json({ message: "Only organization owners or admins can update members" });
@@ -1441,7 +1487,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(orgId, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
         return res.status(403).json({ message: "Only organization owners or admins can remove members" });
@@ -1478,7 +1524,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // Check if user is a member or admin
       const member = await storage.getOrganizationMember(id, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!member && !isAdmin) {
         return res.status(403).json({ message: "Access denied" });
@@ -1502,7 +1548,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(orgId, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
         return res.status(403).json({ message: "Only organization owners or admins can assign roles" });
@@ -1538,7 +1584,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // Check if user is owner or admin
       const member = await storage.getOrganizationMember(orgId, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       
       if (!((member && member.isOwner) || isAdmin)) {
         return res.status(403).json({ message: "Only organization owners or admins can revoke roles" });
@@ -1574,7 +1620,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       // Check if user is a member, the user themselves, or admin
       const member = await storage.getOrganizationMember(orgId, req.user!.id);
-      const isAdmin = await RBACService.hasRole(req.user!.id, ["admin"]);
+      const isAdmin = await RBACService.hasAnyRole(req.user!.id, ["admin"]);
       const isSameUser = req.user!.id === userId;
       
       if (!member && !isAdmin && !isSameUser) {
@@ -1628,7 +1674,12 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       if (search) {
         users = await storage.searchUsers(search as string, parseInt(limit as string));
       } else if (role) {
-        users = await storage.getUsersByRole(role as string);
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(role as string);
+        const roleRow = isUuid ? null : await storage.getRoleByName(role as string);
+        if (!isUuid && !roleRow) {
+          return res.status(400).json({ message: `Unknown role: ${role}` });
+        }
+        users = await storage.getUsersByRole(isUuid ? (role as string) : roleRow!.id);
       } else {
         users = await storage.getAllUsersWithRoles();
       }
@@ -1758,8 +1809,12 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.put("/api/admin/users/:id", authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       const { id } = req.params;
-      const updates = req.body;
-      
+      const editable = ["username", "email", "password", "firstName", "lastName", "role", "profileImage"] as const;
+      const updates: Record<string, any> = {};
+      for (const key of editable) {
+        if (req.body[key] !== undefined) updates[key] = req.body[key];
+      }
+
       const existingUser = await storage.getUser(id);
       if (!existingUser) {
         return res.status(404).json({ message: "User not found" });
@@ -1943,16 +1998,17 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // In a real implementation, these would be stored in a settings table
       const settings = {
         security: {
+          // Read-only view of the policy passwordPolicyService actually enforces
           passwordPolicy: {
-            minLength: 8,
-            requireUppercase: true,
-            requireLowercase: true,
-            requireNumbers: true,
-            requireSpecialChars: false
+            minLength: passwordPolicyService.policy.minLength,
+            requireUppercase: passwordPolicyService.policy.requireUppercase,
+            requireLowercase: passwordPolicyService.policy.requireLowercase,
+            requireNumbers: passwordPolicyService.policy.requireNumbers,
+            requireSpecialChars: passwordPolicyService.policy.requireSpecialChars
           },
-          sessionTimeout: 30, // minutes
-          maxLoginAttempts: 5,
-          lockoutDuration: 15 // minutes
+          sessionTimeout: 30, // minutes (sessionService)
+          maxLoginAttempts: passwordPolicyService.policy.maxFailedAttempts,
+          lockoutDuration: passwordPolicyService.policy.lockoutDuration // minutes
         },
         email: {
           fromAddress: process.env.EMAIL_FROM || "noreply@jeldi.com",
@@ -2037,7 +2093,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       switch (type) {
         case "users":
-          data = await storage.getAllUsersWithRoles();
+          data = (await storage.getAllUsersWithRoles()).map(u => ({ ...u, password: undefined }));
           filename = `users_export_${new Date().toISOString().split('T')[0]}`;
           break;
         case "audit-logs":
@@ -2115,7 +2171,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const { id } = req.params;
       const updates = req.body;
       
-      const kpi = await storage.updateKpiConfiguration(id, updates);
+      const kpi = await storage.updateKpiConfiguration(id, updates, req.user.id);
       if (!kpi) {
         return res.status(404).json({ message: "KPI not found" });
       }
@@ -2129,7 +2185,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.delete("/api/kpis/:id", authenticateToken, requirePermission("kpis", "delete"), asAuth(async (req, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteKpiConfiguration(id);
+      const success = await storage.deleteKpiConfiguration(id, req.user.id);
       
       if (!success) {
         return res.status(404).json({ message: "KPI not found" });
@@ -2352,7 +2408,13 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       if (!Array.isArray(kpiConfigIds) || kpiConfigIds.length === 0 || kpiConfigIds.length > 5) {
         return res.status(400).json({ message: "Must select between 1 and 5 KPIs" });
       }
-      
+
+      // Every id must belong to the caller
+      const ownedIds = new Set((await storage.getKpiConfigurations(req.user.id)).map(k => k.id));
+      if (!kpiConfigIds.every((id: unknown) => typeof id === "string" && ownedIds.has(id))) {
+        return res.status(400).json({ message: "One or more KPI ids are not valid for this user" });
+      }
+
       // Delete existing preferences
       await storage.deleteAllUserKpiPreferences(req.user.id);
       
@@ -2393,7 +2455,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.delete("/api/dashboard/kpi-preferences/:id", authenticateToken, asAuth(async (req, res) => {
     try {
       const { id } = req.params;
-      const deleted = await storage.deleteDashboardKpiPreference(id);
+      const deleted = await storage.deleteDashboardKpiPreference(id, req.user.id);
 
       if (!deleted) {
         return res.status(404).json({ message: "KPI preference not found" });
@@ -2501,38 +2563,6 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
-  app.put("/api/dashboard/chart-preferences/:id", authenticateToken, asAuth(async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updates = req.body;
-
-      const updated = await storage.updateDashboardChartPreference(id, updates);
-
-      if (!updated) {
-        return res.status(404).json({ message: "Chart preference not found" });
-      }
-
-      res.json(updated);
-    } catch (error) {
-      res.status(400).json({ message: "Failed to update chart", error: (error as Error).message });
-    }
-  }));
-
-  app.delete("/api/dashboard/chart-preferences/:id", authenticateToken, asAuth(async (req, res) => {
-    try {
-      const { id } = req.params;
-      const deleted = await storage.deleteDashboardChartPreference(id);
-
-      if (!deleted) {
-        return res.status(404).json({ message: "Chart preference not found" });
-      }
-
-      res.json({ message: "Chart deleted successfully" });
-    } catch (error) {
-      res.status(400).json({ message: "Failed to delete chart", error: (error as Error).message });
-    }
-  }));
-
   app.put("/api/dashboard/chart-preferences/reorder", authenticateToken, asAuth(async (req, res) => {
     try {
       const { positions } = req.body;
@@ -2549,9 +2579,43 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
+  app.put("/api/dashboard/chart-preferences/:id", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+
+      const updated = await storage.updateDashboardChartPreference(id, updates, req.user.id);
+
+      if (!updated) {
+        return res.status(404).json({ message: "Chart preference not found" });
+      }
+
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update chart", error: (error as Error).message });
+    }
+  }));
+
+  app.delete("/api/dashboard/chart-preferences/:id", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteDashboardChartPreference(id, req.user.id);
+
+      if (!deleted) {
+        return res.status(404).json({ message: "Chart preference not found" });
+      }
+
+      res.json({ message: "Chart deleted successfully" });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to delete chart", error: (error as Error).message });
+    }
+  }));
+
   // Chart Data Endpoints
   app.get("/api/charts/revenue-90d", authenticateToken, asAuth(async (req, res) => {
     try {
+      // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
+      if (!isDemoEnvironment()) return res.json([]);
       // Mock data for revenue over 90 days
       const data = Array.from({ length: 90 }, (_, i) => {
         const date = new Date();
@@ -2570,6 +2634,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/unpaid-invoices", authenticateToken, asAuth(async (req, res) => {
     try {
+      // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
+      if (!isDemoEnvironment()) return res.json([]);
       // Mock data for unpaid invoices
       const data = [
         { invoiceId: 'INV-001', customer: 'Acme Corp', amount: 12500, dueDate: '2025-01-15', daysOverdue: 23 },
@@ -2586,6 +2652,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/refunds", authenticateToken, asAuth(async (req, res) => {
     try {
+      // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
+      if (!isDemoEnvironment()) return res.json([]);
       // Mock data for refunds over time
       const data = Array.from({ length: 30 }, (_, i) => {
         const date = new Date();
@@ -2604,6 +2672,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/cancellations", authenticateToken, asAuth(async (req, res) => {
     try {
+      // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
+      if (!isDemoEnvironment()) return res.json([]);
       // Mock data for cancellations
       const data = Array.from({ length: 30 }, (_, i) => {
         const date = new Date();
@@ -2994,8 +3064,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       });
       
       // Broadcast to WebSocket clients (with permission check)
-      const wsClient = wsClients.get(req.user.id);
-      if (wsClient && wsClient.ws.readyState === WebSocket.OPEN && wsClient.permissions.includes('ai.basic')) {
+      for (const wsClient of (wsClients.get(req.user.id) || []).filter(c => c.ws.readyState === WebSocket.OPEN && c.permissions.includes('ai.basic'))) {
         wsClient.ws.send(JSON.stringify({
           type: 'chat_response',
           data: response
@@ -3173,8 +3242,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       });
 
       // Broadcast to WebSocket clients (with permission check)
-      const wsClient = wsClients.get(req.user.id);
-      if (wsClient && wsClient.ws.readyState === WebSocket.OPEN && wsClient.permissions.includes('ai.basic')) {
+      for (const wsClient of (wsClients.get(req.user.id) || []).filter(c => c.ws.readyState === WebSocket.OPEN && c.permissions.includes('ai.basic'))) {
         wsClient.ws.send(JSON.stringify({
           type: 'chat_response',
           conversationId,
@@ -3214,7 +3282,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
       const template = await storage.createQueryTemplate({
         name: name.slice(0, 100),
-        description: description?.slice(0, 500),
+        description: (description ?? "").slice(0, 500),
         query: query.slice(0, 2000),
         category: category.slice(0, 50),
         icon: icon || "fas fa-question-circle",
@@ -3230,7 +3298,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.post("/api/query-templates/:id/use", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
-      await storage.updateQueryTemplateUsage(req.params.id);
+      await storage.updateQueryTemplateUsage(req.params.id, req.user.id);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: "Failed to update template usage", error: (error as Error).message });
@@ -3260,7 +3328,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         userId: req.user.id,
         query: query.slice(0, 2000),
         title: title.slice(0, 100),
-        description: description?.slice(0, 500),
+        description: (description ?? "").slice(0, 500),
         category: category.slice(0, 50)
       });
 
@@ -3272,7 +3340,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.delete("/api/favorite-queries/:id", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
-      const deleted = await storage.deleteFavoriteQuery(req.params.id);
+      const deleted = await storage.deleteFavoriteQuery(req.params.id, req.user.id);
       if (deleted) {
         res.json({ message: "Favorite query deleted successfully" });
       } else {
@@ -3285,7 +3353,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.post("/api/favorite-queries/:id/use", authenticateToken, requirePermission("ai", "basic"), asAuth(async (req, res) => {
     try {
-      await storage.updateFavoriteQueryUsage(req.params.id);
+      await storage.updateFavoriteQueryUsage(req.params.id, req.user.id);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: "Failed to update favorite usage", error: (error as Error).message });
@@ -3346,13 +3414,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const erpSystems = await erpService.getConnectedSystems(userId);
       const connectedSystemsCount = erpSystems.filter(s => s.isConnected).length;
       
-      // Get business metrics
+      // Get business metrics (illustrative figures only on the demo deployment)
+      const demo = isDemoEnvironment();
       const businessMetrics = {
-        totalRevenue: erpData.financials?.totalRevenue || 2450000,
-        monthlyGrowth: 12.5,
-        activeOrders: erpData.sales?.activeOrders || 1247,
-        inventoryValue: erpData.inventory?.totalValue || 890000,
-        systemPerformance: 94.8,
+        totalRevenue: erpData.financials?.totalRevenue ?? (demo ? 2450000 : 0),
+        monthlyGrowth: demo ? 12.5 : 0,
+        activeOrders: erpData.sales?.activeOrders ?? (demo ? 1247 : 0),
+        inventoryValue: erpData.inventory?.totalValue ?? (demo ? 890000 : 0),
+        systemPerformance: demo ? 94.8 : 0,
         connectedSystems: connectedSystemsCount,
         dataFreshness: new Date().toISOString()
       };
@@ -3408,7 +3477,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       };
       
       const periodMonths = period === "12m" ? 12 : period === "6m" ? 6 : 3;
-      const revenueData = generateRevenueData(periodMonths);
+      // Synthetic series only on the demo deployment; production is empty until ERP revenue is wired in
+      const revenueData = isDemoEnvironment() ? generateRevenueData(periodMonths) : [];
       
       // Calculate trends
       const currentRevenue = revenueData[revenueData.length - 1]?.revenue || 0;
@@ -3425,7 +3495,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           totalRevenue,
           monthlyGrowth: Number(monthlyGrowth.toFixed(1)),
           targetAchievement: Number(targetAchievement.toFixed(1)),
-          averageMonthlyRevenue: Math.round(totalRevenue / periodMonths)
+          averageMonthlyRevenue: revenueData.length ? Math.round(totalRevenue / revenueData.length) : 0
         },
         lastUpdated: new Date().toISOString()
       });
@@ -3444,19 +3514,21 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const erpSystems = await erpService.getConnectedSystems(userId);
       const erpData = await erpService.aggregateERPData(userId);
       
-      // Generate performance metrics for each connected system
+      // Health metrics are not collected yet; the demo deployment shows illustrative numbers
+      const demo = isDemoEnvironment();
       const systemPerformance = erpSystems.map(system => {
-        const basePerformance = system.isConnected ? 85 + Math.random() * 10 : 0;
+        const live = system.isConnected && demo;
+        const basePerformance = live ? 85 + Math.random() * 10 : 0;
         return {
           systemName: system.name,
           displayName: system.displayName,
           isConnected: system.isConnected,
           performance: Number(basePerformance.toFixed(1)),
-          uptime: system.isConnected ? 99.2 + Math.random() * 0.7 : 0,
-          responseTime: system.isConnected ? Math.round(150 + Math.random() * 100) : null,
+          uptime: live ? 99.2 + Math.random() * 0.7 : 0,
+          responseTime: live ? Math.round(150 + Math.random() * 100) : null,
           lastSync: system.lastSync,
-          dataQuality: system.isConnected ? 92 + Math.random() * 6 : 0,
-          issues: system.isConnected ? Math.floor(Math.random() * 3) : null
+          dataQuality: live ? 92 + Math.random() * 6 : 0,
+          issues: live ? Math.floor(Math.random() * 3) : null
         };
       });
       
@@ -3528,8 +3600,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         connectedSystems: erpSystems.filter(s => s.isConnected).length
       });
       
-      // Add business-specific insights
-      const businessInsights = [
+      // Illustrative insights for the demo deployment only
+      const businessInsights: Array<Record<string, string>> = !isDemoEnvironment() ? [] : [
         {
           type: "opportunity",
           title: "Revenue Growth Opportunity",
@@ -3560,7 +3632,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         aiInsights,
         businessInsights,
         summary: {
-          totalInsights: aiInsights.length + businessInsights.length,
+          totalInsights: aiInsights.alerts.length + aiInsights.trends.length + businessInsights.length,
           highImpactInsights: businessInsights.filter(i => i.impact === "high").length,
           categories: ["financial", "operational", "performance"]
         },
@@ -3789,6 +3861,23 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
+  app.delete("/api/sessions/all", authenticateToken, asAuth(async (req, res) => {
+    try {
+      await sessionService.terminateAllUserSessions(req.user.id);
+      await auditService.logAction({
+        userId: req.user.id,
+        action: 'session_terminate_all',
+        resource: 'sessions',
+        status: 'success',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+      res.json({ message: "All sessions terminated" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to terminate sessions", error: (error as Error).message });
+    }
+  }));
+
   app.delete("/api/sessions/:id", authenticateToken, asAuth(async (req, res) => {
     try {
       const session = await sessionService.getSessionById(req.params.id);
@@ -3808,23 +3897,6 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.json({ message: "Session terminated" });
     } catch (error) {
       res.status(500).json({ message: "Failed to terminate session", error: (error as Error).message });
-    }
-  }));
-
-  app.delete("/api/sessions/all", authenticateToken, asAuth(async (req, res) => {
-    try {
-      await sessionService.terminateAllUserSessions(req.user.id);
-      await auditService.logAction({
-        userId: req.user.id,
-        action: 'session_terminate_all',
-        resource: 'sessions',
-        status: 'success',
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent']
-      });
-      res.json({ message: "All sessions terminated" });
-    } catch (error) {
-      res.status(500).json({ message: "Failed to terminate sessions", error: (error as Error).message });
     }
   }));
 
@@ -3905,15 +3977,21 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
             try {
               const decoded = jwt.verify(message.token, getJwtSecret()) as any;
               const user = await storage.getUser(decoded.userId);
-              if (user) {
+              // Same checks as authenticateToken: the token must map to a live session
+              const session = user ? await sessionService.validateSession(message.token) : null;
+              if (!user || !session) {
+                ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid or expired session' }));
+              } else {
                 // Load user permissions for WebSocket security
                 const userWithPermissions = await RBACService.getUserWithPermissions(user.id);
                 if (userWithPermissions) {
-                  wsClients.set(user.id, { 
-                    ws, 
+                  const list = wsClients.get(user.id) || [];
+                  list.push({
+                    ws,
                     user,
                     permissions: userWithPermissions.permissions.map(p => `${p.resource}.${p.action}`)
                   });
+                  wsClients.set(user.id, list);
                   ws.send(JSON.stringify({ type: 'auth_success', userId: user.id }));
                 } else {
                   ws.send(JSON.stringify({ type: 'auth_error', message: 'Unable to load user permissions' }));
@@ -3929,10 +4007,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       });
 
       ws.on('close', () => {
-        // Remove client from tracking
-        for (const [userId, client] of Array.from(wsClients.entries())) {
-          if (client.ws === ws) {
-            wsClients.delete(userId);
+        // Remove this socket from tracking
+        for (const [userId, list] of Array.from(wsClients.entries())) {
+          const remaining = list.filter(c => c.ws !== ws);
+          if (remaining.length !== list.length) {
+            if (remaining.length === 0) wsClients.delete(userId); else wsClients.set(userId, remaining);
             break;
           }
         }
@@ -3941,7 +4020,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
     // Real-time KPI updates with permission checks (simulate with interval)
     setInterval(async () => {
-      for (const [userId, client] of Array.from(wsClients.entries())) {
+      for (const [userId, list] of Array.from(wsClients.entries())) {
+        for (const client of list) {
         if (client.ws.readyState === WebSocket.OPEN) {
           // Check if user has permission to view KPIs
           if (!client.permissions.includes('kpis.read')) {
@@ -3976,6 +4056,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           } catch (error) {
             console.error('Error sending KPI updates:', error);
           }
+        }
         }
       }
     }, 30000); // Update every 30 seconds

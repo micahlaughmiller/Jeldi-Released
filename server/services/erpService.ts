@@ -1,5 +1,7 @@
 import { storage } from "../storage";
 import type { ErpConnection } from "@shared/schema";
+import crypto from "crypto";
+import { isDemoEnvironment } from "./demo-data";
 
 export interface ERPSystem {
   name: string;
@@ -185,22 +187,37 @@ export class ERPService {
       });
     }
 
+    // Server-issued, single-use state stored in oauth_sessions (10 minute expiry)
+    const state = crypto.randomBytes(32).toString("hex");
+    await storage.createOAuthSession({
+      state,
+      provider: `erp_${erpSystem}`,
+      isCompleted: false,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      authResult: JSON.stringify({ userId, erpSystem, redirectUri })
+    });
+
     // Generate OAuth URL
     const params = new URLSearchParams({
       client_id: system.oauthConfig.clientId,
       response_type: "code",
       redirect_uri: redirectUri,
       scope: system.oauthConfig.scopes.join(" "),
-      state: `${userId}-${erpSystem}-${Date.now()}`
+      state
     });
 
     return `${system.oauthConfig.authUrl}?${params.toString()}`;
   }
 
   async handleOAuthCallback(code: string, state: string): Promise<ErpConnection> {
-    const [userId, erpSystem] = state.split("-");
+    const session = await storage.getOAuthSessionByState(state);
+    if (!session || !session.provider.startsWith("erp_") || session.isCompleted || new Date() > session.expiresAt) {
+      throw new Error("Invalid or expired ERP OAuth session");
+    }
+    const { userId, erpSystem, redirectUri } = JSON.parse(session.authResult as string) as { userId: string; erpSystem: string; redirectUri: string };
+    await storage.updateOAuthSession(session.id, { isCompleted: true });
+
     const system = ERP_SYSTEMS[erpSystem];
-    
     if (!system) {
       throw new Error(`Invalid ERP system: ${erpSystem}`);
     }
@@ -216,7 +233,7 @@ export class ERPService {
         client_id: system.oauthConfig.clientId,
         client_secret: process.env[`${erpSystem.toUpperCase()}_CLIENT_SECRET`] || "",
         code,
-        redirect_uri: process.env.OAUTH_REDIRECT_URI || ""
+        redirect_uri: redirectUri
       }),
     });
 
@@ -291,8 +308,8 @@ export class ERPService {
           aggregatedData[connection.erpSystem] = { error: (error as Error).message };
         }
       }
-    } else {
-      // Provide demo data for new users to analyze
+    } else if (isDemoEnvironment()) {
+      // Sample company data for the demo deployment only
       aggregatedData.demo = this.getDemoERPData();
     }
 

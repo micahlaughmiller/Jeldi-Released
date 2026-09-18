@@ -381,7 +381,7 @@ export class EmailService {
     const codeChallenge = await this.generateCodeChallenge(codeVerifier);
     
     // Store code verifier in session for later use
-    await this.updateEmailOAuthSession(state, { codeVerifier });
+    await this.updateEmailOAuthSession(state, { codeVerifier, redirectUri });
 
     const params = new URLSearchParams({
       client_id: emailProvider.oauthConfig.clientId,
@@ -406,6 +406,10 @@ export class EmailService {
     const provider = session.provider;
     const userId = session.userId;
     const codeVerifier = session.authResult?.codeVerifier;
+    const redirectUri: string | undefined = session.authResult?.redirectUri || process.env.EMAIL_OAUTH_REDIRECT_URI;
+    if (!redirectUri) {
+      throw new Error('Email OAuth session is missing its redirect URI');
+    }
     const emailProvider = EMAIL_PROVIDERS[provider];
     
     if (!emailProvider) {

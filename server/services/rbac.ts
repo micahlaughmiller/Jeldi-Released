@@ -211,29 +211,29 @@ export class RBACService {
       // Define default permissions
       const defaultPermissions = [
         // User Management
-        { name: "user.create", displayName: "Create Users", description: "Create new user accounts", category: "user_management", resource: "users", action: "create", isSystem: true },
-        { name: "user.read", displayName: "View Users", description: "View user information", category: "user_management", resource: "users", action: "read", isSystem: true },
-        { name: "user.update", displayName: "Update Users", description: "Update user information", category: "user_management", resource: "users", action: "update", isSystem: true },
-        { name: "user.delete", displayName: "Delete Users", description: "Delete user accounts", category: "user_management", resource: "users", action: "delete", isSystem: true },
-        { name: "user.manage_roles", displayName: "Manage User Roles", description: "Assign and revoke user roles", category: "user_management", resource: "users", action: "manage_roles", isSystem: true },
+        { name: "users.create", displayName: "Create Users", description: "Create new user accounts", category: "user_management", resource: "users", action: "create", isSystem: true },
+        { name: "users.read", displayName: "View Users", description: "View user information", category: "user_management", resource: "users", action: "read", isSystem: true },
+        { name: "users.update", displayName: "Update Users", description: "Update user information", category: "user_management", resource: "users", action: "update", isSystem: true },
+        { name: "users.delete", displayName: "Delete Users", description: "Delete user accounts", category: "user_management", resource: "users", action: "delete", isSystem: true },
+        { name: "users.manage_roles", displayName: "Manage User Roles", description: "Assign and revoke user roles", category: "user_management", resource: "users", action: "manage_roles", isSystem: true },
 
         // Financial Data
-        { name: "financial.view", displayName: "View Financial Data", description: "Access financial reports and analytics", category: "financial_data", resource: "financial", action: "read", isSystem: true },
+        { name: "financial.read", displayName: "View Financial Data", description: "Access financial reports and analytics", category: "financial_data", resource: "financial", action: "read", isSystem: true },
         { name: "financial.create", displayName: "Create Financial Records", description: "Create financial data entries", category: "financial_data", resource: "financial", action: "create", isSystem: true },
         { name: "financial.update", displayName: "Update Financial Data", description: "Modify financial records", category: "financial_data", resource: "financial", action: "update", isSystem: true },
         { name: "financial.export", displayName: "Export Financial Data", description: "Export financial reports", category: "financial_data", resource: "financial", action: "export", isSystem: true },
 
         // ERP Access
-        { name: "erp.view", displayName: "View ERP Data", description: "Access ERP system data", category: "erp_access", resource: "erp_connections", action: "read", isSystem: true },
-        { name: "erp.connect", displayName: "Connect ERP Systems", description: "Connect new ERP systems", category: "erp_access", resource: "erp_connections", action: "create", isSystem: true },
-        { name: "erp.manage", displayName: "Manage ERP Connections", description: "Manage ERP system connections", category: "erp_access", resource: "erp_connections", action: "manage", isSystem: true },
-        { name: "erp.sync", displayName: "Sync ERP Data", description: "Synchronize ERP data", category: "erp_access", resource: "erp_connections", action: "sync", isSystem: true },
+        { name: "erp_connections.read", displayName: "View ERP Data", description: "Access ERP system data", category: "erp_access", resource: "erp_connections", action: "read", isSystem: true },
+        { name: "erp_connections.create", displayName: "Connect ERP Systems", description: "Connect new ERP systems", category: "erp_access", resource: "erp_connections", action: "create", isSystem: true },
+        { name: "erp_connections.manage", displayName: "Manage ERP Connections", description: "Manage ERP system connections", category: "erp_access", resource: "erp_connections", action: "manage", isSystem: true },
+        { name: "erp_connections.sync", displayName: "Sync ERP Data", description: "Synchronize ERP data", category: "erp_access", resource: "erp_connections", action: "sync", isSystem: true },
 
         // KPI & Dashboard
-        { name: "kpi.view", displayName: "View KPIs", description: "View KPI data and dashboards", category: "dashboard", resource: "kpis", action: "read", isSystem: true },
-        { name: "kpi.create", displayName: "Create KPIs", description: "Create new KPI configurations", category: "dashboard", resource: "kpis", action: "create", isSystem: true },
-        { name: "kpi.update", displayName: "Update KPIs", description: "Modify KPI configurations", category: "dashboard", resource: "kpis", action: "update", isSystem: true },
-        { name: "kpi.delete", displayName: "Delete KPIs", description: "Remove KPI configurations", category: "dashboard", resource: "kpis", action: "delete", isSystem: true },
+        { name: "kpis.read", displayName: "View KPIs", description: "View KPI data and dashboards", category: "dashboard", resource: "kpis", action: "read", isSystem: true },
+        { name: "kpis.create", displayName: "Create KPIs", description: "Create new KPI configurations", category: "dashboard", resource: "kpis", action: "create", isSystem: true },
+        { name: "kpis.update", displayName: "Update KPIs", description: "Modify KPI configurations", category: "dashboard", resource: "kpis", action: "update", isSystem: true },
+        { name: "kpis.delete", displayName: "Delete KPIs", description: "Remove KPI configurations", category: "dashboard", resource: "kpis", action: "delete", isSystem: true },
 
         // AI Assistant
         { name: "ai.basic", displayName: "Basic AI Access", description: "Basic AI assistant functionality", category: "ai_assistant", resource: "ai", action: "basic", isSystem: true },
@@ -245,12 +245,12 @@ export class RBACService {
         { name: "email.manage", displayName: "Manage Email Settings", description: "Manage email configurations", category: "email", resource: "email", action: "manage", isSystem: true },
 
         // Settings
-        { name: "settings.view", displayName: "View Settings", description: "View system settings", category: "settings", resource: "settings", action: "read", isSystem: true },
+        { name: "settings.read", displayName: "View Settings", description: "View system settings", category: "settings", resource: "settings", action: "read", isSystem: true },
         { name: "settings.update", displayName: "Update Settings", description: "Modify system settings", category: "settings", resource: "settings", action: "update", isSystem: true },
         { name: "settings.admin", displayName: "Admin Settings", description: "Administrative settings access", category: "settings", resource: "settings", action: "admin", isSystem: true },
 
         // Analytics
-        { name: "analytics.view", displayName: "View Analytics", description: "Access analytics dashboards and reports", category: "analytics", resource: "analytics", action: "read", isSystem: true },
+        { name: "analytics.read", displayName: "View Analytics", description: "Access analytics dashboards and reports", category: "analytics", resource: "analytics", action: "read", isSystem: true },
         { name: "analytics.create", displayName: "Create Analytics", description: "Create custom analytics dashboards", category: "analytics", resource: "analytics", action: "create", isSystem: true },
         { name: "analytics.export", displayName: "Export Analytics", description: "Export analytics data and reports", category: "analytics", resource: "analytics", action: "export", isSystem: true },
         { name: "analytics.advanced", displayName: "Advanced Analytics", description: "Access advanced analytics features and insights", category: "analytics", resource: "analytics", action: "advanced", isSystem: true },
@@ -369,8 +369,8 @@ export const requirePermission = (resource: string, action: string) => {
       return res.status(401).json({ message: "Authentication required" });
     }
 
-    const hasPermission = await RBACService.hasPermission(req.user.id, resource, action);
-    
+    const hasPermission = req.user.role === "admin" || await RBACService.hasPermission(req.user.id, resource, action);
+
     if (!hasPermission) {
       await RBACService.logAuditEvent({
         userId: req.user.id,
