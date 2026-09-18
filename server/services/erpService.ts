@@ -2,6 +2,7 @@ import { storage } from "../storage";
 import type { ErpConnection } from "@shared/schema";
 import crypto from "crypto";
 import { isDemoEnvironment } from "./demo-data";
+import { hasConnector } from "../connectors";
 
 export interface ERPSystem {
   name: string;
@@ -629,17 +630,20 @@ export class ERPService {
     oauth: boolean;
     apiKey: boolean;
     manual: boolean;
+    /** true when a real data connector exists (structured credentials + scheduled sync) */
+    connector: boolean;
   }> {
     const system = ERP_SYSTEMS[erpSystem];
-    
+
     if (!system) {
-      return { oauth: false, apiKey: false, manual: false };
+      return { oauth: false, apiKey: false, manual: false, connector: false };
     }
 
     return {
       oauth: !!system.oauthConfig?.clientId,
       apiKey: system.supportsApiKey || false,
-      manual: system.supportsManualConfig || false
+      manual: system.supportsManualConfig || false,
+      connector: hasConnector(erpSystem)
     };
   }
 }

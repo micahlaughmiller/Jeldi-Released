@@ -38,6 +38,17 @@ export const erpConnections = pgTable("erp_connections", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// One pull of normalised ERP data per connection per sync run (see server/connectors/types.ts)
+export const erpSnapshots = pgTable("erp_snapshots", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  connectionId: uuid("connection_id").references(() => erpConnections.id).notNull(),
+  userId: uuid("user_id").references(() => users.id).notNull(),
+  erpSystem: text("erp_system").notNull(),
+  snapshot: jsonb("snapshot").notNull(),
+  warnings: jsonb("warnings"),
+  fetchedAt: timestamp("fetched_at").defaultNow().notNull(),
+});
+
 export const kpiConfigurations = pgTable("kpi_configurations", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: uuid("user_id").references(() => users.id).notNull(),
@@ -680,6 +691,8 @@ export type User = typeof users.$inferSelect;
 export type AuthUser = Pick<User, 'id' | 'username' | 'email' | 'role' | 'authProvider'>;
 export type InsertErpConnection = z.infer<typeof insertErpConnectionSchema>;
 export type ErpConnection = typeof erpConnections.$inferSelect;
+export type ErpSnapshotRow = typeof erpSnapshots.$inferSelect;
+export type InsertErpSnapshotRow = typeof erpSnapshots.$inferInsert;
 export type InsertKpiConfiguration = z.infer<typeof insertKpiConfigurationSchema>;
 export type KpiConfiguration = typeof kpiConfigurations.$inferSelect;
 export type InsertKpiData = z.infer<typeof insertKpiDataSchema>;

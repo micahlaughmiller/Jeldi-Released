@@ -5,9 +5,10 @@
   "license": "MIT",
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx server/index.ts",
-    "build": "vite build && esbuild server/index.ts server/lambda.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "build": "vite build && esbuild server/index.ts server/lambda.ts server/sync-lambda.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "cross-env NODE_ENV=production node dist/index.js",
     "check": "tsc",
+    "test": "vitest run",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
@@ -118,6 +119,7 @@
     "tsx": "^4.19.1",
     "typescript": "5.6.3",
     "vite": "^5.4.19",
+    "vitest": "^2.1.9",
     "webpack": "^5.101.3"
   },
   "optionalDependencies": {

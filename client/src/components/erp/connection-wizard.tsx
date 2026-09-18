@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, CheckCircle2, AlertCircle, ArrowLeft, ArrowRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import ConnectorCredentialsForm, { CONNECTOR_SYSTEMS, defaultCredentials, isCredentialsComplete } from "./connector-credentials-form";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 interface ERPSystem {
@@ -36,6 +37,13 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
   const [connectionMethod, setConnectionMethod] = useState<ConnectionMethod>("oauth");
   const [authMethod, setAuthMethod] = useState<AuthMethod>("api_key");
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  // Structured credentials for ERPs that have a real connector (Epicor Kinetic, Infor SyteLine)
+  const [credentials, setCredentials] = useState<Record<string, string>>(defaultCredentials(erpSystem ?? ""));
+  const usesConnector = !!erpSystem && CONNECTOR_SYSTEMS.includes(erpSystem);
+  useEffect(() => {
+    setCredentials(defaultCredentials(erpSystem ?? ""));
+    setTestResult(null);
+  }, [erpSystem]);
 
   const [formData, setFormData] = useState({
     apiKey: "",
@@ -59,7 +67,7 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
 
   const testConnectionMutation = useMutation({
     mutationFn: async (data: any) => {
-      const response = await apiRequest("POST", "/api/erp/test-connection", data);
+      const response = await apiRequest("POST", data.connector ? "/api/erp/test-credentials" : "/api/erp/test-connection", data);
       return response.json();
     },
     onSuccess: (data) => {
@@ -77,6 +85,11 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
     mutationFn: async (data: any) => {
       let endpoint = "";
       let payload = {};
+
+      if (usesConnector && connectionMethod === "api_key") {
+        const response = await apiRequest("POST", "/api/erp/connect-credentials", { erpSystem, credentials });
+        return response.json();
+      }
 
       if (connectionMethod === "oauth" && erpSystem) {
         const response = await apiRequest("POST", `/api/erp/connect/${erpSystem}`, {});
@@ -125,6 +138,10 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
   });
 
   const handleTestConnection = () => {
+    if (usesConnector && connectionMethod === "api_key") {
+      testConnectionMutation.mutate({ connector: true, erpSystem, credentials });
+      return;
+    }
     const testData: any = {
       apiBaseUrl: formData.instanceUrl || system?.apiBaseUrl || formData.apiBaseUrl,
       authMethod: connectionMethod === "custom" ? authMethod : "api_key",
@@ -163,6 +180,7 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
       apiBaseUrl: ""
     });
     setTestResult(null);
+    setCredentials(defaultCredentials(erpSystem ?? ""));
   };
 
   const handleClose = () => {
@@ -492,7 +510,15 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
           <div className="min-h-[300px]">
             {step === 1 && renderStep1()}
             {step === 2 && connectionMethod === "oauth" && renderStep2OAuth()}
-            {step === 2 && connectionMethod === "api_key" && renderStep2ApiKey()}
+            {step === 2 && connectionMethod === "api_key" && (usesConnector && erpSystem ? (
+              <ConnectorCredentialsForm
+                system={erpSystem}
+                displayName={system?.displayName || erpSystem}
+                values={credentials}
+                onChange={setCredentials}
+                testResult={testResult}
+              />
+            ) : renderStep2ApiKey())}
             {step === 2 && connectionMethod === "custom" && renderStep2Custom()}
             {step === 3 && renderStep3()}
           </div>
@@ -517,7 +543,7 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
                   <Button
                     variant="outline"
                     onClick={handleTestConnection}
-                    disabled={testConnectionMutation.isPending || !formData.apiKey || (connectionMethod === "custom" && !formData.customName)}
+                    disabled={testConnectionMutation.isPending || (usesConnector && connectionMethod === "api_key" ? !isCredentialsComplete(erpSystem!, credentials) : !formData.apiKey) || (connectionMethod === "custom" && !formData.customName)}
                     data-testid="button-test-connection"
                   >
                     {testConnectionMutation.isPending ? (

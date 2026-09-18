@@ -4,6 +4,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { db } from "./db";
 import { isDemoEnvironment } from "./services/demo-data";
+import { hasConnector, buildConnector, splitCredentials } from "./connectors";
+import { syncUser, syncConnection, latestSnapshotForUser } from "./services/syncService";
+import { revenue90d, unpaidInvoices, refunds30d, cancellations30d, monthlyRevenue, businessMetrics as liveBusinessMetrics } from "./services/kpiEngine";
 import { sql } from "drizzle-orm";
 import { erpService } from "./services/erpService";
 import { emailService } from "./services/emailService";
@@ -932,6 +935,99 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.json(methods);
     } catch (error) {
       res.status(500).json({ message: "Failed to get connection methods", error: (error as Error).message });
+    }
+  }));
+
+  // ---- Connector-backed ERPs (Epicor Kinetic, Infor SyteLine): structured credentials + scheduled sync ----
+  app.post("/api/erp/test-credentials", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
+    try {
+      const { erpSystem, credentials } = req.body ?? {};
+      if (!hasConnector(erpSystem)) {
+        return res.status(400).json({ success: false, message: `No connector is implemented for "${erpSystem}"` });
+      }
+      const result = await buildConnector(erpSystem, credentials ?? {}).testConnection();
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ success: false, message: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/erp/connect-credentials", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
+    try {
+      const { erpSystem, credentials } = req.body ?? {};
+      if (!hasConnector(erpSystem)) {
+        return res.status(400).json({ message: `No connector is implemented for "${erpSystem}"` });
+      }
+      const connector = buildConnector(erpSystem, credentials ?? {});
+      const test = await connector.testConnection();
+      if (!test.success) {
+        return res.status(400).json({ message: `Connection test failed: ${test.message}` });
+      }
+      const { secrets, config } = splitCredentials(erpSystem, credentials);
+      const values = {
+        connectionType: "credentials",
+        authMethod: erpSystem === "epicor" ? "api_key" : (config.authMode === "onprem" ? "basic_auth" : "oauth"),
+        apiKey: null,
+        apiSecret: JSON.stringify(secrets), // encrypted at rest by storage
+        accessToken: null,
+        refreshToken: null,
+        instanceUrl: (config.instanceUrl ?? config.idoBaseUrl ?? null) as string | null,
+        config,
+        isConnected: true,
+        metadata: { lastSyncError: null },
+      };
+      const existing = await storage.getErpConnection(req.user.id, erpSystem);
+      const connection = existing
+        ? await storage.updateErpConnection(existing.id, values)
+        : await storage.createErpConnection({ userId: req.user.id, erpSystem, ...values });
+      if (!connection) {
+        return res.status(500).json({ message: "Failed to store connection" });
+      }
+      // First sync runs in the background so the wizard returns promptly
+      syncConnection(connection)
+        .then(() => broadcastERPStatusUpdate(req.user.id))
+        .catch(err => console.error("Initial ERP sync failed:", err));
+      await broadcastERPStatusUpdate(req.user.id);
+      res.json({ ...sanitizeErpConnection(connection), message: test.message, syncStarted: true });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to connect ERP", error: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/erp/sync", authenticateToken, requirePermission("erp_connections", "sync"), asAuth(async (req, res) => {
+    try {
+      const results = await syncUser(req.user.id);
+      await broadcastERPStatusUpdate(req.user.id);
+      res.json({ results });
+    } catch (error) {
+      res.status(500).json({ message: "Sync failed", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/erp/sync-status", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
+    try {
+      const connections = (await storage.getErpConnections(req.user.id)).filter(c => hasConnector(c.erpSystem));
+      const snapshot = await latestSnapshotForUser(req.user.id);
+      res.json({
+        connections: connections.map(c => ({
+          id: c.id,
+          erpSystem: c.erpSystem,
+          isConnected: c.isConnected,
+          lastSync: c.lastSync,
+          lastSyncError: (c.metadata as Record<string, unknown> | null)?.lastSyncError ?? null,
+        })),
+        dataAsOf: snapshot?.fetchedAt ?? null,
+        warnings: snapshot?.warnings ?? [],
+        counts: snapshot ? {
+          salesOrders: snapshot.salesOrders.length,
+          deliveries: snapshot.deliveries.length,
+          invoices: snapshot.invoices.length,
+          jobs: snapshot.jobs.length,
+          inventory: snapshot.inventory.length,
+        } : null,
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to read sync status", error: (error as Error).message });
     }
   }));
 
@@ -2614,6 +2710,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // Chart Data Endpoints
   app.get("/api/charts/revenue-90d", authenticateToken, asAuth(async (req, res) => {
     try {
+      const snapshot = await latestSnapshotForUser(req.user.id);
+      if (snapshot) return res.json(revenue90d(snapshot));
       // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
       if (!isDemoEnvironment()) return res.json([]);
       // Mock data for revenue over 90 days
@@ -2634,6 +2732,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/unpaid-invoices", authenticateToken, asAuth(async (req, res) => {
     try {
+      const snapshot = await latestSnapshotForUser(req.user.id);
+      if (snapshot) return res.json(unpaidInvoices(snapshot));
       // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
       if (!isDemoEnvironment()) return res.json([]);
       // Mock data for unpaid invoices
@@ -2652,6 +2752,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/refunds", authenticateToken, asAuth(async (req, res) => {
     try {
+      const snapshot = await latestSnapshotForUser(req.user.id);
+      if (snapshot) return res.json(refunds30d(snapshot));
       // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
       if (!isDemoEnvironment()) return res.json([]);
       // Mock data for refunds over time
@@ -2672,6 +2774,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/cancellations", authenticateToken, asAuth(async (req, res) => {
     try {
+      const snapshot = await latestSnapshotForUser(req.user.id);
+      if (snapshot) return res.json(cancellations30d(snapshot));
       // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
       if (!isDemoEnvironment()) return res.json([]);
       // Mock data for cancellations
@@ -3414,6 +3518,17 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const erpSystems = await erpService.getConnectedSystems(userId);
       const connectedSystemsCount = erpSystems.filter(s => s.isConnected).length;
       
+      const snapshot = await latestSnapshotForUser(userId);
+      if (snapshot) {
+        const live = liveBusinessMetrics(snapshot);
+        return res.json({
+          businessMetrics: { ...live, connectedSystems: connectedSystemsCount, dataFreshness: live.dataAsOf ?? new Date().toISOString() },
+          kpiSummary,
+          erpSystems: erpSystems.map(s => ({ name: s.name, displayName: s.displayName, isConnected: s.isConnected, lastSync: s.lastSync })),
+          lastUpdated: new Date().toISOString()
+        });
+      }
+
       // Get business metrics (illustrative figures only on the demo deployment)
       const demo = isDemoEnvironment();
       const businessMetrics = {
@@ -3478,7 +3593,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       
       const periodMonths = period === "12m" ? 12 : period === "6m" ? 6 : 3;
       // Synthetic series only on the demo deployment; production is empty until ERP revenue is wired in
-      const revenueData = isDemoEnvironment() ? generateRevenueData(periodMonths) : [];
+      const snapshot = await latestSnapshotForUser(userId);
+      const revenueData = snapshot
+        ? monthlyRevenue(snapshot, periodMonths)
+        : (isDemoEnvironment() ? generateRevenueData(periodMonths) : []);
       
       // Calculate trends
       const currentRevenue = revenueData[revenueData.length - 1]?.revenue || 0;

@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { enforceEnvironmentValidation } from "./env-validation";
 import { initializeAllDemoData } from "./services/demo-data";
+import { startSyncScheduler } from "./services/syncService";
 
 // Enforce environment validation before starting application
 enforceEnvironmentValidation();
@@ -63,6 +64,9 @@ app.use((req, res, next) => {
 
   // Initialize demo data if in demo.jeldi.app environment
   await initializeAllDemoData();
+
+  // Pull ERP data on a schedule (long-running server only; Lambda uses sync-lambda.ts)
+  startSyncScheduler();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

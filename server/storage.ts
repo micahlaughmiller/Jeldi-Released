@@ -1,4 +1,5 @@
 import { 
+  erpSnapshots, type ErpSnapshotRow, type InsertErpSnapshotRow,
   users, erpConnections, kpiConfigurations, kpiData, dashboardKpiPreferences, dashboardChartPreferences, emailConfigurations, chatHistory, oauthSessions, userPreferences,
   conversations, queryTemplates, favoriteQueries, roles, permissions, userRoles, rolePermissions, auditLog,
   organizations, organizationMembers,
@@ -18,7 +19,8 @@ import {
   type OrganizationWithMembers, type UserWithOrganizations, type OrganizationMemberWithUser
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, or } from "drizzle-orm";
+import { eq, desc, and, sql, or, inArray } from "drizzle-orm";
+import { CONNECTOR_SYSTEMS } from "./connectors";
 import { encryptionService } from "./services/encryptionService";
 
 export interface IStorage {
@@ -263,6 +265,55 @@ export class DatabaseStorage implements IStorage {
       apiKey: connection.apiKey ? encryptionService.decrypt(connection.apiKey) : null,
       apiSecret: connection.apiSecret ? encryptionService.decrypt(connection.apiSecret) : null,
     };
+  }
+
+  private decryptConnection(conn: ErpConnection): ErpConnection {
+    return {
+      ...conn,
+      accessToken: conn.accessToken ? encryptionService.decrypt(conn.accessToken) : null,
+      refreshToken: conn.refreshToken ? encryptionService.decrypt(conn.refreshToken) : null,
+      apiKey: conn.apiKey ? encryptionService.decrypt(conn.apiKey) : null,
+      apiSecret: conn.apiSecret ? encryptionService.decrypt(conn.apiSecret) : null,
+    };
+  }
+
+  /** Every connected connection whose ERP has a connector, credentials decrypted (sync scheduler) */
+  async getConnectorBackedConnections(): Promise<ErpConnection[]> {
+    const rows = await db.select().from(erpConnections)
+      .where(and(eq(erpConnections.isConnected, true), inArray(erpConnections.erpSystem, [...CONNECTOR_SYSTEMS])));
+    return rows.map(r => this.decryptConnection(r));
+  }
+
+  async saveErpSnapshot(row: InsertErpSnapshotRow): Promise<ErpSnapshotRow> {
+    const [saved] = await db.insert(erpSnapshots).values(row).returning();
+    // Keep only the newest few snapshots per connection
+    const stale = await db.select({ id: erpSnapshots.id }).from(erpSnapshots)
+      .where(eq(erpSnapshots.connectionId, row.connectionId))
+      .orderBy(desc(erpSnapshots.fetchedAt))
+      .offset(3);
+    for (const s of stale) {
+      await db.delete(erpSnapshots).where(eq(erpSnapshots.id, s.id));
+    }
+    return saved;
+  }
+
+  /** Newest snapshot for each of the user's still-connected ERP connections */
+  async getLatestErpSnapshots(userId: string): Promise<ErpSnapshotRow[]> {
+    const connected = new Set(
+      (await db.select({ id: erpConnections.id }).from(erpConnections)
+        .where(and(eq(erpConnections.userId, userId), eq(erpConnections.isConnected, true)))).map(r => r.id)
+    );
+    const rows = await db.select().from(erpSnapshots)
+      .where(eq(erpSnapshots.userId, userId))
+      .orderBy(desc(erpSnapshots.fetchedAt));
+    const seen = new Set<string>();
+    const latest: ErpSnapshotRow[] = [];
+    for (const r of rows) {
+      if (!connected.has(r.connectionId) || seen.has(r.connectionId)) continue;
+      seen.add(r.connectionId);
+      latest.push(r);
+    }
+    return latest;
   }
 
   async createErpConnection(connection: InsertErpConnection): Promise<ErpConnection> {

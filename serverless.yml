@@ -36,6 +36,13 @@
               method: ANY
               cors: true
 
+      # Scheduled ERP sync (Epicor / SyteLine connectors). Adjust the rate to the customers' tolerance for data age.
+      sync:
+        handler: dist/sync-lambda.handler
+        timeout: 300
+        events:
+          - schedule: rate(15 minutes)
+
     plugins:
       - serverless-offline
 
