@@ -91,13 +91,15 @@ export default function AdminDashboard() {
     await performLogout(setLocation, { showToast: true });
   };
 
-  if (error) {
-    toast({
-      title: "Error Loading Dashboard",
-      description: "Failed to load admin dashboard data. Please try again.",
-      variant: "destructive",
-    });
-  }
+  useEffect(() => {
+    if (error) {
+      toast({
+        title: "Error Loading Dashboard",
+        description: "Failed to load admin dashboard data. Please try again.",
+        variant: "destructive",
+      });
+    }
+  }, [error, toast]);
 
   if (!user) {
     return (
@@ -123,7 +125,6 @@ export default function AdminDashboard() {
         <Header 
           connectedCount={0}
           connectionStatus="disconnected"
-          onEmailClick={() => {}} // Not needed on admin page
         />
         
         <main className="flex-1 overflow-y-auto p-6">

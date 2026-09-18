@@ -47,7 +47,11 @@ function Router() {
           <AIAssistant />
         </AIEnabledLayout>
       </Route>
-      <Route path="/settings" component={Settings} />
+      <Route path="/settings">
+        <AIEnabledLayout>
+          <Settings />
+        </AIEnabledLayout>
+      </Route>
       <Route path="/admin/roles">
         <AIEnabledLayout>
           <RoleManagement />

@@ -69,7 +69,7 @@ export function AdminInterface() {
         title: "Role Assigned",
         description: "Role has been successfully assigned to the user.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/rbac"] });
+      queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/api/rbac") });
       setIsAssignDialogOpen(false);
       setSelectedUser("");
       setSelectedRole("");
@@ -94,7 +94,7 @@ export function AdminInterface() {
         title: "Role Revoked",
         description: "Role has been successfully revoked from the user.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/rbac"] });
+      queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/api/rbac") });
       setIsRevokeDialogOpen(false);
       setSelectedUser("");
       setSelectedRole("");

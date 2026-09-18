@@ -59,29 +59,26 @@ interface UsersResponse {
 
 export function AdminUserManagement() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   // Fetch users
   const { data: usersData, isLoading } = useQuery<UsersResponse>({
-    queryKey: ['/api/admin/users', { search: searchQuery, role: roleFilter }],
+    queryKey: [`/api/admin/users?${new URLSearchParams({ ...(searchQuery ? { search: searchQuery } : {}), ...(roleFilter !== "all" ? { role: roleFilter } : {}) }).toString()}`],
     refetchInterval: 30000,
   });
 
   // Fetch roles for dropdowns
-  const { data: roles } = useQuery({
+  const { data: roles } = useQuery<Array<{ id: string; name: string; displayName: string }>>({
     queryKey: ['/api/rbac/roles'],
   });
 
   // Create user mutation
   const createUserMutation = useMutation({
     mutationFn: (userData: CreateUserForm) => 
-      apiRequest('/api/admin/users', {
-        method: 'POST',
-        body: JSON.stringify(userData),
-      }),
+      apiRequest('POST', '/api/admin/users', userData),
     onSuccess: () => {
       toast({
         title: "User Created",
@@ -259,7 +256,7 @@ export function AdminUserManagement() {
                   <SelectValue placeholder="Filter by role" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Roles</SelectItem>
+                  <SelectItem value="all">All Roles</SelectItem>
                   {roles?.map((role: any) => (
                     <SelectItem key={role.id} value={role.name}>
                       {role.displayName}

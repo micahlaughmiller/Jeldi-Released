@@ -14,7 +14,7 @@ export default function UnpaidInvoicesChart({ configuration }: UnpaidInvoicesCha
     return <div className="h-[300px] flex items-center justify-center">Loading...</div>;
   }
 
-  const invoices = data as any[];
+  const invoices = Array.isArray(data) ? (data as any[]) : [];
   const totalUnpaid = invoices.reduce((sum, inv) => sum + inv.amount, 0);
 
   return (

@@ -62,7 +62,6 @@ export default function RoleManagement() {
         <Header 
           connectedCount={0}
           connectionStatus="disconnected"
-          onEmailClick={() => {}} // Not needed on this page
         />
         
         <main className="flex-1 overflow-y-auto">

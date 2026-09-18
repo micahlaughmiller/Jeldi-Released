@@ -13,6 +13,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { useHasPermission } from "@/hooks/use-permissions";
 import { apiRequest } from "@/lib/queryClient";
 import { Plus, Edit, Trash2, Settings, BarChart3, TrendingUp, DollarSign, Package, Cog } from "lucide-react";
 
@@ -60,15 +61,8 @@ export default function KpiCustomization({ onClose }: KpiCustomizationProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Check user permissions
-  const { data: user } = useQuery({
-    queryKey: ["/api/auth/me"],
-  });
-  
-  // Check if user has KPI management permissions
-  const canManageKpis = user?.roles?.some((role: any) => 
-    ["admin", "manager", "analyst"].includes(role.role?.name?.toLowerCase())
-  ) ?? false;
+  // KPI management follows the RBAC permission the server enforces
+  const canManageKpis = useHasPermission("kpis", "create");
 
   // Form for creating/editing KPIs
   const form = useForm<KpiConfigurationFormData>({
@@ -91,7 +85,7 @@ export default function KpiCustomization({ onClose }: KpiCustomizationProps) {
 
   // Create KPI mutation
   const createKpiMutation = useMutation({
-    mutationFn: (data: KpiConfigurationFormData) => apiRequest("/api/kpis", "POST", data),
+    mutationFn: (data: KpiConfigurationFormData) => apiRequest("POST", "/api/kpis", data),
     onSuccess: () => {
       toast({
         title: "KPI Created",
@@ -113,7 +107,7 @@ export default function KpiCustomization({ onClose }: KpiCustomizationProps) {
   // Update KPI mutation
   const updateKpiMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<KpiConfigurationFormData> }) => 
-      apiRequest(`/api/kpis/${id}`, "PUT", data),
+      apiRequest("PUT", `/api/kpis/${id}`, data),
     onSuccess: () => {
       toast({
         title: "KPI Updated",
@@ -134,7 +128,7 @@ export default function KpiCustomization({ onClose }: KpiCustomizationProps) {
 
   // Delete KPI mutation
   const deleteKpiMutation = useMutation({
-    mutationFn: (id: string) => apiRequest(`/api/kpis/${id}`, "DELETE"),
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/kpis/${id}`),
     onSuccess: () => {
       toast({
         title: "KPI Deleted",

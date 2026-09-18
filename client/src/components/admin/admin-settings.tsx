@@ -59,10 +59,7 @@ export function AdminSettings() {
   // Update settings mutation
   const updateSettingsMutation = useMutation({
     mutationFn: ({ category, settings: newSettings }: { category: string; settings: any }) =>
-      apiRequest('/api/admin/settings', {
-        method: 'PUT',
-        body: JSON.stringify({ category, settings: newSettings }),
-      }),
+      apiRequest('PUT', '/api/admin/settings', { category, settings: newSettings }),
     onSuccess: () => {
       toast({
         title: "Settings Updated",
@@ -92,6 +89,11 @@ export function AdminSettings() {
 
   const handleNestedSettingUpdate = (category: string, parentKey: string, key: string, value: any) => {
     if (!settings) return;
+    // Callers pass parentKey === key for flat fields; treat that as a plain update
+    if (parentKey === key) {
+      handleSettingUpdate(category, key, value);
+      return;
+    }
     
     const categorySettings = settings[category as keyof SystemSettings] as any;
     const newSettings = {

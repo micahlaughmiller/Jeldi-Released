@@ -173,58 +173,5 @@ export function useRealtimeData() {
     }
   }, [insightsResponse]);
 
-  // Initialize with sample data for better UX (only if no real data exists)
-  useEffect(() => {
-    if (Object.keys(data.kpiData).length === 0 && !kpiLoading && !kpiResponse) {
-      const initialKPIData: Record<string, KPIDataPoint> = {
-        "default-revenue": {
-          id: "default-revenue",
-          name: "Monthly Revenue",
-          type: "revenue",
-          value: "$2.45M",
-          change: 12.5,
-          timestamp: new Date(),
-        },
-        "default-orders": {
-          id: "default-orders",
-          name: "Active Orders",
-          type: "orders",
-          value: "1,247",
-          change: 8.2,
-          timestamp: new Date(),
-        },
-        "default-inventory": {
-          id: "default-inventory",
-          name: "Inventory Fill Rate",
-          type: "inventory",
-          value: "89.2%",
-          change: -3.1,
-          timestamp: new Date(),
-        },
-        "default-performance": {
-          id: "default-performance",
-          name: "System Performance",
-          type: "performance",
-          value: "94.8%",
-          change: 15.7,
-          timestamp: new Date(),
-        },
-        "default-efficiency": {
-          id: "default-efficiency",
-          name: "Operational Efficiency",
-          type: "efficiency",
-          value: "87.3%",
-          change: 6.4,
-          timestamp: new Date(),
-        },
-      };
-
-      setData((prev) => ({
-        ...prev,
-        kpiData: initialKPIData,
-      }));
-    }
-  }, [data.kpiData, kpiLoading, kpiResponse]);
-
   return data;
 }

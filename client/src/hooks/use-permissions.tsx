@@ -1,6 +1,7 @@
 import { useState, useEffect, useContext, createContext, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
+import { getApiUrl } from "@/lib/api-config";
 
 // Types for RBAC system
 export interface Permission {
@@ -58,8 +59,10 @@ export function PermissionProvider({ children }: { children: ReactNode }) {
   const [userRoles, setUserRoles] = useState<UserWithRoles | null>(null);
 
   // Fetch user roles and permissions
+  const hasToken = typeof window !== "undefined" && !!localStorage.getItem("token");
   const { data, isLoading, error, refetch } = useQuery<UserWithRoles>({
     queryKey: ["/api/rbac/me"],
+    enabled: hasToken,
     staleTime: 5 * 60 * 1000, // 5 minutes
     refetchOnWindowFocus: false,
   });
@@ -196,7 +199,7 @@ export async function checkPermissionAPI(resource: string, action: string): Prom
     const response = await queryClient.fetchQuery({
       queryKey: ["/api/rbac/check-permission", resource, action],
       queryFn: async () => {
-        const res = await fetch("/api/rbac/check-permission", {
+        const res = await fetch(getApiUrl("/api/rbac/check-permission"), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

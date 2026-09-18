@@ -45,7 +45,7 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
     apiBaseUrl: ""
   });
 
-  const { data: connectionMethods } = useQuery({
+  const { data: connectionMethods } = useQuery<{ oauth?: boolean; apiKey?: boolean; custom?: boolean }>({
     queryKey: ["/api/erp/connection-methods", erpSystem],
     enabled: isOpen && !!erpSystem,
   });
@@ -104,6 +104,9 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
         };
       }
 
+      if (!endpoint) {
+        throw new Error("Select an ERP system, or choose Custom Configuration");
+      }
       const response = await apiRequest("POST", endpoint, payload);
       return response.json();
     },

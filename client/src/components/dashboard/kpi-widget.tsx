@@ -27,10 +27,15 @@ export default function KPIWidget({ kpi, data, position, onDelete, preferenceId 
     }
   };
 
-  const getKPIColor = (position: number) => {
-    const colors = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"];
-    return colors[position % colors.length];
-  };
+  // Static class names so Tailwind's scanner can see them
+  const colorClasses = [
+    { iconBg: "bg-chart-1/10", icon: "text-chart-1", bar: "bg-chart-1" },
+    { iconBg: "bg-chart-2/10", icon: "text-chart-2", bar: "bg-chart-2" },
+    { iconBg: "bg-chart-3/10", icon: "text-chart-3", bar: "bg-chart-3" },
+    { iconBg: "bg-chart-4/10", icon: "text-chart-4", bar: "bg-chart-4" },
+    { iconBg: "bg-chart-5/10", icon: "text-chart-5", bar: "bg-chart-5" },
+  ];
+  const getKPIColor = (position: number) => colorClasses[position % colorClasses.length];
 
   const isPositive = data ? data.change >= 0 : true;
   const color = getKPIColor(position);
@@ -55,8 +60,8 @@ export default function KPIWidget({ kpi, data, position, onDelete, preferenceId 
         </button>
       )}
       <div className="flex items-center justify-between mb-4">
-        <div className={`w-12 h-12 bg-${color}/10 rounded-lg flex items-center justify-center`}>
-          <i className={`${getKPIIcon(kpi.type)} text-${color} text-xl`}></i>
+        <div className={`w-12 h-12 ${color.iconBg} rounded-lg flex items-center justify-center`}>
+          <i className={`${getKPIIcon(kpi.type)} ${color.icon} text-xl`}></i>
         </div>
         <div className={`flex items-center space-x-1 text-sm ${
           isPositive ? "text-chart-2" : "text-destructive"
@@ -77,7 +82,7 @@ export default function KPIWidget({ kpi, data, position, onDelete, preferenceId 
         <p className="text-muted-foreground text-sm">{kpi.name}</p>
         <div className="mt-3 h-1 bg-muted rounded-full overflow-hidden">
           <div 
-            className={`h-full bg-${color} rounded-full transition-all duration-500`}
+            className={`h-full ${color.bar} rounded-full transition-all duration-500`}
             style={{ width: `${Math.min(Math.abs(data?.change || 0) * 5, 100)}%` }}
           ></div>
         </div>

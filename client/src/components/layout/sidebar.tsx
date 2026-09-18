@@ -43,7 +43,7 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
 
       {/* Navigation */}
       <nav className="flex-1 px-4 py-6 space-y-2">
-        <Link href="/dashboard">
+        <Link href="/dashboard" asChild>
           <a 
             className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
               location === "/dashboard" 
@@ -69,7 +69,7 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
           </span>
         </button>
         
-        <Link href="/analytics">
+        <Link href="/analytics" asChild>
           <a 
             className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
               location === "/analytics" 
@@ -83,7 +83,7 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
           </a>
         </Link>
         
-        <Link href="/ai-assistant">
+        <Link href="/ai-assistant" asChild>
           <a 
             className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
               location === "/ai-assistant" || location === "/assistant"
@@ -106,7 +106,7 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
               </p>
             </div>
             
-            <Link href="/admin">
+            <Link href="/admin" asChild>
               <a 
                 className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
                   location === "/admin" || location === "/admin/dashboard"
@@ -120,7 +120,7 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
               </a>
             </Link>
             
-            <Link href="/admin/roles">
+            <Link href="/admin/roles" asChild>
               <a 
                 className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
                   location === "/admin/roles" 
@@ -136,7 +136,7 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
           </>
         )}
         
-        <Link href="/settings">
+        <Link href="/settings" asChild>
           <a 
             className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
               location === "/settings" 

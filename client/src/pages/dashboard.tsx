@@ -179,7 +179,7 @@ export default function Dashboard() {
           connectedCount={connectedSystemsCount}
           connectionStatus={connectionStatus}
           onERPClick={() => setIsERPModalOpen(true)}
-          onAccountClick={() => setLocation("/account")}
+          onAccountClick={() => setLocation("/settings")}
         />
         
         <div className="flex-1 overflow-auto">

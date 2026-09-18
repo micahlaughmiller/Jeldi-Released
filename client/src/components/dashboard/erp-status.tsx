@@ -10,6 +10,17 @@ interface ERPStatusProps {
   systems: ERPSystem[];
 }
 
+function formatRelative(value: string | Date): string {
+  const ms = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(ms)) return "Unknown";
+  const min = Math.round(ms / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const hrs = Math.round(min / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  return `${Math.round(hrs / 24)} d ago`;
+}
+
 export default function ERPStatus({ systems }: ERPStatusProps) {
   const getSystemIcon = (name: string) => {
     switch (name) {
@@ -55,7 +66,7 @@ export default function ERPStatus({ systems }: ERPStatusProps) {
                 <div>
                   <p className="font-medium">{system.displayName}</p>
                   <p className="text-xs text-muted-foreground">
-                    Last sync: {system.lastSync ? "2 min ago" : "Never"}
+                    Last sync: {system.lastSync ? formatRelative(system.lastSync) : "Never"}
                   </p>
                 </div>
               </div>

@@ -15,14 +15,14 @@ export default function Revenue90DChart({ configuration }: Revenue90DChartProps)
   }
 
   // Sample every 3 days to avoid overcrowding the chart
-  const sampledData = (data as any[]).filter((_, index) => index % 3 === 0);
+  const sampledData = (Array.isArray(data) ? (data as any[]) : []).filter((_, index) => index % 3 === 0);
 
   return (
     <div className="h-[300px]" data-testid="revenue-90d-chart-content">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={sampledData}>
           <defs>
-            <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id="revenue90dGradient" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.8}/>
               <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0}/>
             </linearGradient>
@@ -54,7 +54,7 @@ export default function Revenue90DChart({ configuration }: Revenue90DChartProps)
             dataKey="revenue"
             stroke="hsl(var(--chart-1))"
             fillOpacity={1}
-            fill="url(#revenueGradient)"
+            fill="url(#revenue90dGradient)"
           />
           <Line
             type="monotone"

@@ -39,8 +39,8 @@ interface AuditLogsResponse {
 }
 
 export function AdminAuditLogs() {
-  const [actionFilter, setActionFilter] = useState("");
-  const [resourceFilter, setResourceFilter] = useState("");
+  const [actionFilter, setActionFilter] = useState("all");
+  const [resourceFilter, setResourceFilter] = useState("all");
   const [userFilter, setUserFilter] = useState("");
   const [startDate, setStartDate] = useState<Date | undefined>();
   const [endDate, setEndDate] = useState<Date | undefined>();
@@ -49,20 +49,19 @@ export function AdminAuditLogs() {
   // Fetch audit logs
   const { data: auditData, isLoading } = useQuery<AuditLogsResponse>({
     queryKey: [
-      '/api/admin/audit-logs/enhanced',
-      {
-        action: actionFilter,
-        resource: resourceFilter,
-        userId: userFilter,
-        startDate: startDate?.toISOString(),
-        endDate: endDate?.toISOString(),
-      }
+      `/api/admin/audit-logs/enhanced?${new URLSearchParams({
+        ...(actionFilter !== "all" ? { action: actionFilter } : {}),
+        ...(resourceFilter !== "all" ? { resource: resourceFilter } : {}),
+        ...(userFilter ? { userId: userFilter } : {}),
+        ...(startDate ? { startDate: startDate.toISOString() } : {}),
+        ...(endDate ? { endDate: endDate.toISOString() } : {}),
+      }).toString()}`
     ],
     refetchInterval: 15000, // Refresh every 15 seconds for real-time feeling
   });
 
   // Recent activity for real-time stream
-  const { data: recentActivity } = useQuery({
+  const { data: recentActivity } = useQuery<{ activities?: AuditLog[] }>({
     queryKey: ['/api/admin/activity/stream'],
     refetchInterval: 5000, // Refresh every 5 seconds
   });
@@ -172,7 +171,7 @@ export function AdminAuditLogs() {
                   <SelectValue placeholder="All actions" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Actions</SelectItem>
+                  <SelectItem value="all">All Actions</SelectItem>
                   <SelectItem value="login">Login Events</SelectItem>
                   <SelectItem value="created">Create Actions</SelectItem>
                   <SelectItem value="updated">Update Actions</SelectItem>
@@ -190,7 +189,7 @@ export function AdminAuditLogs() {
                   <SelectValue placeholder="All resources" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Resources</SelectItem>
+                  <SelectItem value="all">All Resources</SelectItem>
                   <SelectItem value="users">Users</SelectItem>
                   <SelectItem value="roles">Roles</SelectItem>
                   <SelectItem value="permissions">Permissions</SelectItem>

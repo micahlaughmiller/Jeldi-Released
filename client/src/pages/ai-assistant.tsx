@@ -366,7 +366,6 @@ export default function AIAssistant() {
         <Header 
           connectedCount={0}
           connectionStatus="disconnected"
-          onEmailClick={() => toast({ title: "Email", description: "Email feature coming soon!" })}
         />
         
         <div className="flex-1 flex overflow-hidden">

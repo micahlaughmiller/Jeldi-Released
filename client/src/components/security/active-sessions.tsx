@@ -28,9 +28,7 @@ export function ActiveSessions() {
 
   const terminateSessionMutation = useMutation({
     mutationFn: async (sessionId: string) => {
-      await apiRequest(`/api/sessions/${sessionId}`, {
-        method: "DELETE",
-      });
+      await apiRequest("DELETE", `/api/sessions/${sessionId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/sessions/active"] });
@@ -50,9 +48,7 @@ export function ActiveSessions() {
 
   const terminateAllMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("/api/sessions/all", {
-        method: "DELETE",
-      });
+      await apiRequest("DELETE", "/api/sessions/all");
     },
     onSuccess: () => {
       toast({

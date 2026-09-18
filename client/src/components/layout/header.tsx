@@ -1,11 +1,17 @@
+import { useLocation } from "wouter";
+
 interface HeaderProps {
   connectedCount: number;
   connectionStatus: "connected" | "connecting" | "disconnected";
-  onERPClick: () => void;
-  onAccountClick: () => void;
+  onERPClick?: () => void;
+  onAccountClick?: () => void;
 }
 
 export default function Header({ connectedCount, connectionStatus, onERPClick, onAccountClick }: HeaderProps) {
+  const [, setLocation] = useLocation();
+  // Pages that don't manage ERP connections send the user to the dashboard; account goes to settings
+  const handleERPClick = onERPClick ?? (() => setLocation("/dashboard"));
+  const handleAccountClick = onAccountClick ?? (() => setLocation("/settings"));
   return (
     <header className="bg-card border-b border-border px-6 py-4" data-testid="header">
       <div className="flex items-center justify-between">
@@ -14,20 +20,9 @@ export default function Header({ connectedCount, connectionStatus, onERPClick, o
           <p className="text-sm text-muted-foreground">Monitor your enterprise performance across all ERP systems</p>
         </div>
         <div className="flex items-center space-x-4">
-          {/* Notification Bell */}
-          <button 
-            className="relative p-2 text-muted-foreground hover:text-foreground"
-            data-testid="button-notifications"
-          >
-            <i className="fas fa-bell"></i>
-            <span className="absolute -top-1 -right-1 w-3 h-3 bg-destructive rounded-full text-xs flex items-center justify-center text-destructive-foreground">
-              3
-            </span>
-          </button>
-          
           {/* ERP Connection Status - Moved to top-right */}
           <button
-            onClick={onERPClick}
+            onClick={handleERPClick}
             className="flex items-center space-x-2 px-3 py-2 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
             data-testid="button-erp-status"
           >
@@ -44,7 +39,7 @@ export default function Header({ connectedCount, connectionStatus, onERPClick, o
           
           {/* Account Icon */}
           <button
-            onClick={onAccountClick}
+            onClick={handleAccountClick}
             className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary/20 transition-colors"
             data-testid="button-account"
           >

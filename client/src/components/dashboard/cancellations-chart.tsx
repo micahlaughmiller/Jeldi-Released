@@ -14,7 +14,7 @@ export default function CancellationsChart({ configuration }: CancellationsChart
     return <div className="h-[300px] flex items-center justify-center">Loading...</div>;
   }
 
-  const cancellationsData = data as any[];
+  const cancellationsData = Array.isArray(data) ? (data as any[]) : [];
   const totalCancellations = cancellationsData.reduce((sum, item) => sum + item.cancellations, 0);
 
   // Group by reason for summary

@@ -14,7 +14,7 @@ export default function RefundsChart({ configuration }: RefundsChartProps) {
     return <div className="h-[300px] flex items-center justify-center">Loading...</div>;
   }
 
-  const refundsData = data as any[];
+  const refundsData = Array.isArray(data) ? (data as any[]) : [];
   const totalRefunds = refundsData.reduce((sum, item) => sum + item.refunds, 0);
   const totalAmount = refundsData.reduce((sum, item) => sum + item.amount, 0);
 

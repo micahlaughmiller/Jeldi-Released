@@ -123,7 +123,6 @@ export default function EmailCenter() {
         <Header 
           connectedCount={0}
           connectionStatus="disconnected"
-          onEmailClick={() => setIsComposerOpen(true)}
         />
         
         <div className="flex-1 overflow-auto p-6">

@@ -17,6 +17,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { useLocation } from "wouter";
+import Sidebar from "@/components/layout/sidebar";
+import { performLogout } from "@/lib/logout";
 import { 
   Settings as SettingsIcon, User, Lock, Globe, Download, Upload, 
   Bell, Palette, Clock, DollarSign, Shield, 
@@ -156,6 +159,13 @@ interface Role {
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (!localStorage.getItem("token")) {
+      setLocation("/login");
+    }
+  }, [setLocation]);
   const [activeTab, setActiveTab] = useState("profile");
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -533,6 +543,16 @@ export default function Settings() {
   }
 
   return (
+    <div className="flex h-full bg-background">
+      {userData && (
+        <Sidebar
+          user={userData as any}
+          onLogout={() => performLogout(setLocation, { showToast: true })}
+          onERPClick={() => setLocation("/dashboard")}
+          connectedCount={0}
+        />
+      )}
+    <div className="flex-1 overflow-auto">
     <div className="container mx-auto p-6 max-w-4xl" data-testid="settings-page">
       <div className="flex items-center space-x-2 mb-6">
         <SettingsIcon className="h-6 w-6 text-primary" />
@@ -1753,6 +1773,8 @@ export default function Settings() {
           </Form>
         </DialogContent>
       </Dialog>
+    </div>
+    </div>
     </div>
   );
 }

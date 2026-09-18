@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
+import { getApiUrl } from "@/lib/api-config";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -143,7 +144,7 @@ export default function Analytics() {
     queryKey: ["/api/analytics/revenue", selectedPeriod],
     queryFn: async () => {
       const token = localStorage.getItem("token");
-      const response = await fetch(`/api/analytics/revenue?period=${selectedPeriod}`, {
+      const response = await fetch(getApiUrl(`/api/analytics/revenue?period=${selectedPeriod}`), {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -203,7 +204,7 @@ export default function Analytics() {
 
   const handleExport = async () => {
     try {
-      const response = await fetch(`/api/analytics/export?type=overview&format=json`, {
+      const response = await fetch(getApiUrl(`/api/analytics/export?type=overview&format=json`), {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -218,7 +219,10 @@ export default function Analytics() {
         a.download = `analytics-export-${new Date().toISOString().slice(0, 10)}.json`;
         document.body.appendChild(a);
         a.click();
-        window.URL.revokeObjectURL(url);
+        setTimeout(() => {
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+        }, 0);
         
         toast({
           title: "Export Successful",
@@ -292,7 +296,6 @@ export default function Analytics() {
         <Header 
           connectedCount={overview?.businessMetrics.connectedSystems || 0}
           connectionStatus="connected"
-          onEmailClick={() => {}}
         />
         
         <div className="flex-1 overflow-auto p-6">
