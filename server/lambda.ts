@@ -3,6 +3,11 @@ import serverless from "serverless-http";
 import type { APIGatewayProxyHandler, APIGatewayProxyEvent, Context } from "aws-lambda";
 import { registerRoutes } from "./routes";
 import { enforceEnvironmentValidation } from "./env-validation";
+import { initializeAllDemoData } from "./services/demo-data";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const lambdaDir = path.dirname(fileURLToPath(import.meta.url));
 
 // Enforce environment validation before starting application
 enforceEnvironmentValidation();
@@ -22,8 +27,7 @@ app.use((req: express.Request, res: express.Response, next: express.NextFunction
   const allowedOrigins = [
     'https://d2k9wjgsy12ugk.cloudfront.net',  // Original CloudFront domain
     'https://demo.jeldi.app',                 // Custom domain for main app
-    'https://overlay.jeldi.app',              // Custom domain for AI overlay
-    'null'                                    // Allow file:// protocol for testing
+    'https://overlay.jeldi.app'               // Custom domain for AI overlay
   ];
   
   const origin = req.headers.origin;
@@ -31,33 +35,21 @@ app.use((req: express.Request, res: express.Response, next: express.NextFunction
   // Set Vary: Origin header for proper CloudFront caching
   res.setHeader('Vary', 'Origin');
   
-  // More permissive CORS handling for development and production
+  // Only echo back origins we recognise; anything else gets no CORS header
   if (origin) {
-    // Allow specific origins
-    if (allowedOrigins.includes(origin)) {
+    let hostname = '';
+    try { hostname = new URL(origin).hostname; } catch { /* malformed origin */ }
+    const isReplit = hostname.endsWith('.replit.dev') || hostname.endsWith('.replit.app');
+    const isLocal = process.env.NODE_ENV !== 'production' && (hostname === 'localhost' || hostname === '127.0.0.1');
+    if (allowedOrigins.includes(origin) || isReplit || isLocal) {
       res.setHeader('Access-Control-Allow-Origin', origin);
     }
-    // Allow all Replit domains
-    else if (origin.includes('replit.dev') || origin.includes('replit.app')) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    }
-    // Allow localhost for development
-    else if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    }
-    // Fallback to wildcard for debugging
-    else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-    }
-  } else {
-    // No origin header - allow all (for server-to-server)
-    res.setHeader('Access-Control-Allow-Origin', '*');
   }
   
   // Set other CORS headers
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin,X-Requested-With,Cache-Control,Pragma');
   res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,DELETE,OPTIONS,PATCH');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Credentials', 'false');
   res.setHeader('Access-Control-Max-Age', '86400');
   
   // Handle preflight OPTIONS requests
@@ -70,8 +62,7 @@ app.use((req: express.Request, res: express.Response, next: express.NextFunction
 });
 
 // Static file serving for Lambda deployment
-import path from 'path';
-const publicPath = path.join(__dirname, 'public');
+const publicPath = path.join(lambdaDir, 'public');
 app.use(express.static(publicPath, {
   maxAge: '1h', // Cache static assets for 1 hour
   etag: true,
@@ -128,6 +119,9 @@ async function initializeAppOnce() {
     try {
       // Register routes but exclude WebSocket functionality
       const httpServer = await registerRoutes(app, { excludeWebSocket: true });
+
+      // Same startup seeding as server/index.ts (no-op unless DEMO_MODE=true)
+      await initializeAllDemoData();
 
       // Error handling middleware
       app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

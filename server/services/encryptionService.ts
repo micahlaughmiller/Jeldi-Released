@@ -9,15 +9,16 @@ class EncryptionService {
   private encryptionKey: Buffer;
 
   constructor() {
-    const key = process.env.ENCRYPTION_KEY;
+    // TOKEN_ENCRYPTION_KEY is the documented name; ENCRYPTION_KEY kept for existing deployments
+    const key = process.env.TOKEN_ENCRYPTION_KEY || process.env.ENCRYPTION_KEY;
     
     if (!key) {
       // CRITICAL: Fail fast if encryption key is missing
       // Auto-generating a key causes data loss on restart (compliance violation)
       throw new Error(
-        'ENCRYPTION_KEY environment variable is required but not set. ' +
+        'TOKEN_ENCRYPTION_KEY environment variable is required but not set. ' +
         'Please generate a secure 32-byte key and set it in your environment:\n' +
-        '  Example: ENCRYPTION_KEY=' + crypto.randomBytes(32).toString('hex') + '\n' +
+        '  Example: TOKEN_ENCRYPTION_KEY=' + crypto.randomBytes(32).toString('hex') + '\n' +
         'For Replit: Add this to Secrets tab. For AWS Lambda: Add to environment variables.'
       );
     }

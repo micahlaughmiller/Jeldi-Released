@@ -41,9 +41,9 @@ const REQUIRED_ENV_VARS: RequiredEnvVar[] = [
     example: 'openssl rand -base64 64'
   },
   {
-    name: 'SESSION_SECRET',
-    description: 'Secret key for session encryption (minimum 32 characters)',
-    example: 'openssl rand -base64 64'
+    name: 'DATABASE_URL',
+    description: 'PostgreSQL connection string (Neon or any Postgres)',
+    example: 'postgresql://user:password@host/db?sslmode=require'
   },
   {
     name: 'TOKEN_ENCRYPTION_KEY',
@@ -71,6 +71,21 @@ const INSECURE_PLACEHOLDER_PATTERNS = [
 ];
 
 const OPTIONAL_ENV_VARS: OptionalEnvVar[] = [
+  {
+    name: 'OPENAI_API_KEY',
+    description: 'OpenAI API key',
+    impact: 'AI assistant and insight endpoints will fail'
+  },
+  {
+    name: 'DEMO_MODE',
+    description: "Set to 'true' on the demo deployment to seed demo users/data and enable /api/auth/demo-login",
+    impact: 'Demo login and demo data are disabled'
+  },
+  {
+    name: 'DEMO_USER_PASSWORD',
+    description: 'Password for the seeded demo accounts (random per process if unset)',
+    impact: 'Demo accounts cannot be used with the normal login form'
+  },
   {
     name: 'GOOGLE_CLIENT_ID',
     description: 'Google OAuth client ID',
@@ -281,7 +296,7 @@ export function detectEnvironment(): EnvironmentInfo {
   }
   
   // Build allowed origins based on environment
-  const allowedOrigins = getAllowedOrigins({ platform, isProduction, domain });
+  const allowedOrigins = getAllowedOrigins({ platform, isProduction, isDevelopment, domain, allowedOrigins: [] });
   
   console.log(`Environment detected: ${platform} (${nodeEnv}), domain: ${domain || 'none'}`);
   
@@ -383,7 +398,7 @@ export function validateDomainSecurity(domain: string, isProduction?: boolean): 
     // Check wildcard patterns
     for (const allowedOrigin of allowedOrigins) {
       if (allowedOrigin.includes('*')) {
-        const pattern = allowedOrigin.replace(/\*/g, '.*');
+        const pattern = allowedOrigin.split('*').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*');
         const regex = new RegExp(`^${pattern}$`);
         if (regex.test(domain)) {
           isAllowed = true;

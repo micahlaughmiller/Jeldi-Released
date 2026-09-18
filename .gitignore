@@ -26,3 +26,12 @@ amplifytools.xcconfig
 .secret-*
 **.sample
 #amplify-do-not-edit-end
+
+# local secrets and deploy artifacts
+.env
+.env.*
+!.env.example
+*.zip
+.serverless/
+.local/
+*.log
