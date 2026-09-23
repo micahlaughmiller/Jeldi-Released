@@ -263,7 +263,7 @@ export class OAuthService {
     }
 
     // Generate JWT token
-    const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+    const token = jwt.sign({ userId: user.id, jti: crypto.randomUUID() }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
 
     const authResult = {
       token,

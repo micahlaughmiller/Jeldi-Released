@@ -2,12 +2,13 @@ import type { ErpConnection } from "@shared/schema";
 import type { ErpConnector, FetchLike } from "./types";
 import { EpicorConnector, type EpicorCredentials } from "./epicor";
 import { SyteLineConnector, type SyteLineCredentials } from "./syteline";
+import { DemoConnector, type DemoCredentials } from "./demo";
 
 export * from "./types";
-export { EpicorConnector, SyteLineConnector };
+export { EpicorConnector, SyteLineConnector, DemoConnector };
 
 /** ERP systems that have a real connector behind them */
-export const CONNECTOR_SYSTEMS = ["epicor", "syteline"] as const;
+export const CONNECTOR_SYSTEMS = ["epicor", "syteline", "demo"] as const;
 export type ConnectorSystem = (typeof CONNECTOR_SYSTEMS)[number];
 
 export function hasConnector(system: string): system is ConnectorSystem {
@@ -37,6 +38,7 @@ export function credentialsFromConnection(connection: ErpConnection): Record<str
 export const SECRET_FIELDS: Record<ConnectorSystem, string[]> = {
   epicor: ["apiKey", "password", "bearerToken"],
   syteline: ["clientSecret", "serviceAccountSecret", "password"],
+  demo: [],
 };
 
 export function buildConnector(system: string, credentials: Record<string, any>, fetchImpl?: FetchLike): ErpConnector {
@@ -45,6 +47,8 @@ export function buildConnector(system: string, credentials: Record<string, any>,
       return new EpicorConnector(credentials as EpicorCredentials, { fetchImpl, overrides: credentials.overrides });
     case "syteline":
       return new SyteLineConnector(credentials as SyteLineCredentials, { fetchImpl, overrides: credentials.overrides });
+    case "demo":
+      return new DemoConnector(credentials as DemoCredentials);
     default:
       throw new Error(`No connector implemented for ERP system "${system}"`);
   }

@@ -35,3 +35,6 @@ amplifytools.xcconfig
 .serverless/
 .local/
 *.log
+
+# local PGlite database
+data/

@@ -251,6 +251,42 @@ export function monthlyRevenue(snapshot: ErpSnapshot, months: number, now: Date 
   return out.map(m => ({ ...m, target: round(avg, 2) }));
 }
 
+/**
+ * Compact, LLM-friendly summary of a snapshot: what the AI assistant and /api/erp/data expose
+ * for a connector-backed system instead of raw rows.
+ */
+export function summarizeSnapshot(snapshot: ErpSnapshot, now: Date = new Date()) {
+  const kpis = computeKpis(snapshot, now);
+  const { current } = windows(now, 90);
+  const byCustomer = new Map<string, number>();
+  for (const inv of snapshot.invoices) {
+    if (inv.isCreditMemo || !inWindow(inv.date, current)) continue;
+    const key = inv.customer ?? "Unknown";
+    byCustomer.set(key, (byCustomer.get(key) ?? 0) + inv.amount);
+  }
+  const topCustomers90d = Array.from(byCustomer.entries())
+    .sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([customer, revenue]) => ({ customer, revenue: round(revenue, 2) }));
+  return {
+    source: "snapshot",
+    system: snapshot.system,
+    asOf: snapshot.fetchedAt,
+    kpis: Object.fromEntries(Object.values(kpis).map(k => [k.type, { value: k.value, change: k.change, basis: k.basis }])),
+    metrics: businessMetrics(snapshot, now),
+    topCustomers90d,
+    overdueInvoices: unpaidInvoices(snapshot, now, 10).filter(i => i.daysOverdue > 0),
+    counts: {
+      salesOrders: snapshot.salesOrders.length,
+      openOrders: openOrders(snapshot.salesOrders),
+      deliveries: snapshot.deliveries.length,
+      invoices: snapshot.invoices.length,
+      jobs: snapshot.jobs.length,
+      inventoryItems: snapshot.inventory.length,
+    },
+    warnings: snapshot.warnings,
+  };
+}
+
 // ---- analytics overview numbers -----------------------------------------------------------
 
 export function businessMetrics(snapshot: ErpSnapshot, now: Date = new Date()) {

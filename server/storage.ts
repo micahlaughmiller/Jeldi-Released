@@ -23,6 +23,12 @@ import { eq, desc, and, sql, or, inArray } from "drizzle-orm";
 import { CONNECTOR_SYSTEMS } from "./connectors";
 import { encryptionService } from "./services/encryptionService";
 
+/** Rows touched by an insert/update/delete, across the Neon (rowCount) and PGlite (affectedRows) drivers */
+function affected(result: unknown): number {
+  const r = result as { rowCount?: number | null; affectedRows?: number | null } | null;
+  return r?.rowCount ?? r?.affectedRows ?? 0;
+}
+
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
@@ -393,7 +399,7 @@ export class DatabaseStorage implements IStorage {
   async deleteKpiConfiguration(id: string, userId?: string): Promise<boolean> {
     const result = await db.delete(kpiConfigurations)
       .where(userId ? and(eq(kpiConfigurations.id, id), eq(kpiConfigurations.userId, userId)) : eq(kpiConfigurations.id, id));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   async getLatestKpiData(kpiId: string): Promise<KpiData | undefined> {
@@ -451,7 +457,7 @@ export class DatabaseStorage implements IStorage {
   async deleteDashboardKpiPreference(id: string, userId?: string): Promise<boolean> {
     const result = await db.delete(dashboardKpiPreferences)
       .where(userId ? and(eq(dashboardKpiPreferences.id, id), eq(dashboardKpiPreferences.userId, userId)) : eq(dashboardKpiPreferences.id, id));
-    return result.rowCount ? result.rowCount > 0 : false;
+    return affected(result) > 0;
   }
 
   async deleteAllUserKpiPreferences(userId: string): Promise<void> {
@@ -493,7 +499,7 @@ export class DatabaseStorage implements IStorage {
   async deleteDashboardChartPreference(id: string, userId?: string): Promise<boolean> {
     const result = await db.delete(dashboardChartPreferences)
       .where(userId ? and(eq(dashboardChartPreferences.id, id), eq(dashboardChartPreferences.userId, userId)) : eq(dashboardChartPreferences.id, id));
-    return result.rowCount ? result.rowCount > 0 : false;
+    return affected(result) > 0;
   }
 
   async deleteAllUserChartPreferences(userId: string): Promise<void> {
@@ -604,7 +610,7 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOAuthSession(id: string): Promise<boolean> {
     const result = await db.delete(oauthSessions).where(eq(oauthSessions.id, id));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   async cleanupExpiredOAuthSessions(): Promise<void> {
@@ -642,7 +648,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(chatHistory).where(eq(chatHistory.conversationId, id));
     // Then delete the conversation
     const result = await db.delete(conversations).where(eq(conversations.id, id));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   // Enhanced Chat History operations
@@ -655,7 +661,7 @@ export class DatabaseStorage implements IStorage {
 
   async deleteChatHistory(id: string): Promise<boolean> {
     const result = await db.delete(chatHistory).where(eq(chatHistory.id, id));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   // Query Template operations
@@ -710,7 +716,7 @@ export class DatabaseStorage implements IStorage {
   async deleteFavoriteQuery(id: string, userId?: string): Promise<boolean> {
     const result = await db.delete(favoriteQueries)
       .where(userId ? and(eq(favoriteQueries.id, id), eq(favoriteQueries.userId, userId)) : eq(favoriteQueries.id, id));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   async updateFavoriteQueryUsage(id: string, userId?: string): Promise<void> {
@@ -1019,7 +1025,7 @@ export class DatabaseStorage implements IStorage {
 
   async deleteRole(id: string): Promise<boolean> {
     const result = await db.delete(roles).where(eq(roles.id, id));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   // Permission operations
@@ -1053,7 +1059,7 @@ export class DatabaseStorage implements IStorage {
 
   async deletePermission(id: string): Promise<boolean> {
     const result = await db.delete(permissions).where(eq(permissions.id, id));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   // User Role operations
@@ -1094,7 +1100,7 @@ export class DatabaseStorage implements IStorage {
         eq(userRoles.userId, userId),
         eq(userRoles.roleId, roleId)
       ));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   async getUserPermissions(userId: string): Promise<Permission[]> {
@@ -1174,7 +1180,7 @@ export class DatabaseStorage implements IStorage {
         eq(rolePermissions.roleId, roleId),
         eq(rolePermissions.permissionId, permissionId)
       ));
-    return (result.rowCount || 0) > 0;
+    return affected(result) > 0;
   }
 
   // Audit Log operations

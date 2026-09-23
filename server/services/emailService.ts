@@ -2,7 +2,8 @@ import { storage } from "../storage";
 import type { EmailConfiguration } from "@shared/schema";
 import { getUncachableOutlookClient } from "./outlookClient";
 import crypto from "crypto";
-import { promisify } from "util";
+import nodemailer from "nodemailer";
+import { isDemoEnvironment } from "./demo-data";
 import { getTokenEncryptionKey, getSecureCallbackURL, detectEnvironment, validateDomainSecurity, getAllowedOrigins } from "../env-validation";
 
 export interface EmailProvider {
@@ -31,10 +32,10 @@ export const EMAIL_PROVIDERS: Record<string, EmailProvider> = {
   },
   outlook: {
     name: "outlook",
-    displayName: "Outlook.com",
+    displayName: "Outlook / Microsoft 365",
     oauthConfig: {
-      authUrl: "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
-      tokenUrl: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+      authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
       clientId: process.env.MICROSOFT_CLIENT_ID || "",
       scopes: ["https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read", "offline_access"]
     },
@@ -130,6 +131,26 @@ ERP Connect Pro`,
     variables: ["systems", "issues"]
   }
 };
+
+/** OAuth client secret for an email provider (Outlook must never fall back to the Google secret) */
+export function clientSecretFor(provider: string): string {
+  if (provider === "gmail") return process.env.GMAIL_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || "";
+  if (provider === "outlook") return process.env.OUTLOOK_CLIENT_SECRET || process.env.MICROSOFT_CLIENT_SECRET || "";
+  return process.env[`${provider.toUpperCase()}_CLIENT_SECRET`] || "";
+}
+
+export interface OutboxMessage {
+  id: string;
+  provider: string;
+  to: string[];
+  cc: string[];
+  subject: string;
+  body: string;
+  isHtml: boolean;
+  sentAt: string;
+}
+// Demo outbox: captured messages per user, newest first, in memory only
+const outbox = new Map<string, OutboxMessage[]>();
 
 function getEmailOAuthRedirectUris(): string[] {
   // Use enhanced environment detection for better multi-domain support
@@ -313,18 +334,44 @@ export class EmailService {
     }
   }
 
-  async checkOutlookConnection(): Promise<{ isConnected: boolean; email?: string }> {
+  async checkOutlookConnection(userId?: string): Promise<{ isConnected: boolean; email?: string }> {
+    if (userId) {
+      const configs = await storage.getEmailConfigurations(userId);
+      const outlook = configs.find(c => c.provider === "outlook" && c.isActive && c.accessToken);
+      if (outlook) return { isConnected: true, email: outlook.email || undefined };
+    }
+    // Replit-hosted deployments may have the platform connector instead of a direct OAuth grant
+    if (!process.env.CONNECTORS_HOSTNAME) return { isConnected: false };
     try {
       const client = await getUncachableOutlookClient();
       const user = await client.api('/me').get();
-      return {
-        isConnected: true,
-        email: user.mail || user.userPrincipalName
-      };
+      return { isConnected: true, email: user.mail || user.userPrincipalName };
     } catch (error) {
-      console.error('Outlook connection check failed:', error);
+      console.error('Outlook connector check failed:', (error as Error).message);
       return { isConnected: false };
     }
+  }
+
+  /** Demo outbox is available on the demo deployment and anywhere that is not production */
+  isDemoOutboxEnabled(): boolean {
+    return isDemoEnvironment() || process.env.NODE_ENV !== "production";
+  }
+
+  getOutbox(userId: string): OutboxMessage[] {
+    return outbox.get(userId) ?? [];
+  }
+
+  /** Verify SMTP settings by logging in, without sending anything */
+  async verifySmtp(config: SMTPConfiguration): Promise<void> {
+    const transport = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: { user: config.auth.user, pass: config.auth.pass },
+      connectionTimeout: 10_000,
+    });
+    await transport.verify();
+    transport.close();
   }
 
   async initiateEmailOAuth(provider: string, userId: string, redirectUri: string): Promise<string> {
@@ -435,9 +482,10 @@ export class EmailService {
     
     console.log(`Exchanging email OAuth code for tokens, provider: ${provider}, redirect: ${tokenParams.redirect_uri}`);
 
-    // Only add client_secret if not using PKCE (for backward compatibility)
-    if (!codeVerifier) {
-      tokenParams.client_secret = process.env[`${provider.toUpperCase()}_CLIENT_SECRET`] || process.env.GOOGLE_CLIENT_SECRET || "";
+    // Web-application registrations at Google and Microsoft require the client secret even with PKCE
+    const secret = clientSecretFor(provider);
+    if (secret) {
+      tokenParams.client_secret = secret;
     }
 
     // Exchange code for tokens
@@ -521,35 +569,56 @@ export class EmailService {
         };
       }
 
-      if (provider === "gmail") {
+      if (provider === "demo") {
+        if (!this.isDemoOutboxEnabled()) {
+          throw new Error("The demo outbox is not available in production");
+        }
+        const list = outbox.get(userId) ?? [];
+        list.unshift({
+          id: crypto.randomUUID(),
+          provider,
+          to: finalMessage.to,
+          cc: finalMessage.cc ?? [],
+          subject: finalMessage.subject,
+          body: finalMessage.body,
+          isHtml: Boolean(finalMessage.isHtml),
+          sentAt: new Date().toISOString(),
+        });
+        outbox.set(userId, list.slice(0, 50));
+        console.log(`[demo outbox] ${userId} -> ${finalMessage.to.join(", ")}: ${finalMessage.subject}`);
+        return true;
+      }
+
+      if (provider === "gmail" || provider === "outlook") {
         const configurations = await storage.getEmailConfigurations(userId);
         const config = configurations.find(c => c.provider === provider && c.isActive);
-        
+
         if (!config || !config.accessToken) {
-          throw new Error(`Gmail not configured or not active`);
+          if (provider === "outlook" && process.env.CONNECTORS_HOSTNAME) {
+            return await this.sendOutlookViaConnector(finalMessage);
+          }
+          throw new Error(`${EMAIL_PROVIDERS[provider].displayName} is not connected`);
         }
 
-        // Check if token is expired and refresh if needed
-        if (config.tokenExpiry && config.tokenExpiry < new Date()) {
+        // Refresh a minute early so a token that expires mid-request is not used
+        if (config.tokenExpiry && config.tokenExpiry.getTime() < Date.now() + 60_000) {
           if (!config.refreshToken) {
-            throw new Error('Gmail access token expired and no refresh token available');
+            throw new Error(`${EMAIL_PROVIDERS[provider].displayName} access token expired and no refresh token is stored; reconnect the account`);
           }
           await this.refreshAccessToken(userId, provider, config.id);
-          // Re-fetch updated configuration
-          const updatedConfigs = await storage.getEmailConfigurations(userId);
-          const updatedConfig = updatedConfigs.find(c => c.id === config.id);
-          if (!updatedConfig?.accessToken) {
-            throw new Error('Failed to refresh Gmail access token');
+          const refreshed = (await storage.getEmailConfigurations(userId)).find(c => c.id === config.id);
+          if (!refreshed?.accessToken) {
+            throw new Error(`Failed to refresh ${EMAIL_PROVIDERS[provider].displayName} access token`);
           }
-          config.accessToken = updatedConfig.accessToken;
+          config.accessToken = refreshed.accessToken;
         }
-        
-        // Decrypt token before use
-        const decryptedToken = await this.decryptToken(config.accessToken);
-        return await this.sendGmailMessage(decryptedToken, finalMessage);
-      } else if (provider === "outlook") {
-        // Use Replit connector for Outlook
-        return await this.sendOutlookMessage("", finalMessage); // Access token not needed with connector
+
+        const token = await this.decryptToken(config.accessToken);
+        const ok = provider === "gmail"
+          ? await this.sendGmailMessage(token, finalMessage)
+          : await this.sendOutlookMessage(token, finalMessage);
+        if (ok) await storage.updateEmailConfiguration(config.id, { lastUsed: new Date() }).catch(() => undefined);
+        return ok;
       } else if (provider === "smtp") {
         // Enterprise SMTP
         const configurations = await storage.getEmailConfigurations(userId);
@@ -569,30 +638,33 @@ export class EmailService {
     }
   }
 
-  private async sendSMTPMessage(config: any, message: EmailMessage): Promise<boolean> {
+  private async sendSMTPMessage(config: EmailConfiguration, message: EmailMessage): Promise<boolean> {
+    const smtpConfig = JSON.parse(config.accessToken || '{}') as SMTPConfiguration;
+    if (!smtpConfig.host || !smtpConfig.auth) {
+      throw new Error('Invalid SMTP configuration');
+    }
+    const password = await this.decryptToken(smtpConfig.auth.pass);
+    const transport = nodemailer.createTransport({
+      host: smtpConfig.host,
+      port: smtpConfig.port,
+      secure: smtpConfig.secure,
+      auth: { user: smtpConfig.auth.user, pass: password },
+      connectionTimeout: 15_000,
+    });
     try {
-      // Simple SMTP implementation using built-in Node.js modules
-      const smtpConfig = JSON.parse(config.accessToken || '{}') as SMTPConfiguration;
-      
-      if (!smtpConfig.host || !smtpConfig.auth) {
-        throw new Error('Invalid SMTP configuration');
-      }
-
-      // Decrypt SMTP password
-      const decryptedPassword = await this.decryptToken(smtpConfig.auth.pass);
-      const emailContent = this.buildRFC2822Message(message);
-      
-      // Use Node.js built-in net module for SMTP
-      return await this.sendViaSMTP({
-        ...smtpConfig,
-        auth: {
-          ...smtpConfig.auth,
-          pass: decryptedPassword
-        }
-      }, emailContent);
-    } catch (error) {
-      console.error('Failed to send SMTP email:', error);
-      return false;
+      await transport.sendMail({
+        from: config.email || smtpConfig.auth.user,
+        to: message.to,
+        cc: message.cc,
+        bcc: message.bcc,
+        subject: message.subject,
+        ...(message.isHtml ? { html: message.body } : { text: message.body }),
+        attachments: message.attachments?.map(a => ({ filename: a.name, content: a.data, encoding: "base64", contentType: a.contentType })),
+      });
+      await storage.updateEmailConfiguration(config.id, { lastUsed: new Date() }).catch(() => undefined);
+      return true;
+    } finally {
+      transport.close();
     }
   }
 
@@ -609,13 +681,46 @@ export class EmailService {
       body: JSON.stringify({ raw: base64Email })
     });
 
-    return response.ok;
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      if (response.status === 401) throw new Error("Gmail authentication failed - reconnect the account");
+      throw new Error(`Gmail send failed: HTTP ${response.status} ${text.slice(0, 200)}`);
+    }
+    return true;
   }
 
+  /** Send through Microsoft Graph with the user's own OAuth token (work or personal account) */
   private async sendOutlookMessage(accessToken: string, message: EmailMessage): Promise<boolean> {
+    const response = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: {
+          subject: message.subject,
+          body: { contentType: message.isHtml ? "HTML" : "Text", content: message.body },
+          toRecipients: message.to.map(email => ({ emailAddress: { address: email } })),
+          ccRecipients: (message.cc ?? []).map(email => ({ emailAddress: { address: email } })),
+          bccRecipients: (message.bcc ?? []).map(email => ({ emailAddress: { address: email } })),
+          attachments: (message.attachments ?? []).map(a => ({
+            "@odata.type": "#microsoft.graph.fileAttachment", name: a.name, contentType: a.contentType, contentBytes: a.data,
+          })),
+        },
+        saveToSentItems: true,
+      }),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      if (response.status === 401) throw new Error("Outlook authentication failed - reconnect the account");
+      throw new Error(`Outlook send failed: HTTP ${response.status} ${text.slice(0, 200)}`);
+    }
+    return true;
+  }
+
+  /** Replit-hosted deployments only: send through the platform's Outlook connector */
+  private async sendOutlookViaConnector(message: EmailMessage): Promise<boolean> {
     try {
       const client = await getUncachableOutlookClient();
-      
+
       const outlookMessage = {
         subject: message.subject,
         body: {
@@ -663,38 +768,14 @@ export class EmailService {
   }
 
   renderTemplate(template: EmailTemplate, variables: Record<string, any>): { subject: string; body: string } {
-    let subject = template.subject;
-    let body = template.body;
-
-    // Secure template variable replacement with sanitization
-    const allowedVariables = template.variables || [];
-    
-    Object.keys(variables).forEach(key => {
-      // Only allow whitelisted variables
-      if (!allowedVariables.includes(key)) {
-        console.warn(`Template variable '${key}' not in allowed list for template`);
-        return;
-      }
-      
-      // Sanitize variable value to prevent injection
-      let sanitizedValue = String(variables[key])
-        .replace(/[<>&"']/g, (match) => {
-          const escapeMap: Record<string, string> = {
-            '<': '&lt;',
-            '>': '&gt;',
-            '&': '&amp;',
-            '"': '&quot;',
-            "'": '&#x27;'
-          };
-          return escapeMap[match] || match;
-        });
-      
-      const regex = new RegExp(`{{${key}}}`, 'g');
-      subject = subject.replace(regex, sanitizedValue);
-      body = body.replace(regex, sanitizedValue);
-    });
-
-    return { subject, body };
+    // Only whitelisted top-level variables are visible to the template
+    const allowed = new Set(template.variables || []);
+    const scope: Record<string, any> = {};
+    for (const [k, v] of Object.entries(variables)) {
+      if (allowed.has(k)) scope[k] = v;
+      else console.warn(`Template variable '${k}' not in allowed list for template`);
+    }
+    return { subject: renderMustache(template.subject, scope), body: renderMustache(template.body, scope) };
   }
 
   /**
@@ -775,7 +856,7 @@ export class EmailService {
         body: new URLSearchParams({
           grant_type: 'refresh_token',
           client_id: emailProvider.oauthConfig.clientId,
-          client_secret: process.env[`${provider.toUpperCase()}_CLIENT_SECRET`] || process.env.GOOGLE_CLIENT_SECRET || "",
+          client_secret: clientSecretFor(provider),
           refresh_token: decryptedRefreshToken,
         }),
       });
@@ -801,61 +882,39 @@ export class EmailService {
     }
   }
 
-  // SMTP implementation using Node.js net module
-  private async sendViaSMTP(config: SMTPConfiguration, emailContent: string): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-      const net = require('net');
-      const tls = require('tls');
-      
-      const client = config.secure 
-        ? tls.connect(config.port, config.host)
-        : net.createConnection(config.port, config.host);
-
-      let step = 0;
-      const commands = [
-        `HELO ${config.host}`,
-        'AUTH LOGIN',
-        Buffer.from(config.auth.user).toString('base64'),
-        Buffer.from(config.auth.pass).toString('base64'),
-        `MAIL FROM: <${config.auth.user}>`,
-        emailContent.match(/^To: (.+)$/m)?.[1]?.split(',').map((to: string) => `RCPT TO: <${to.trim()}>`),
-        'DATA',
-        emailContent,
-        '.',
-        'QUIT'
-      ].flat().filter(Boolean);
-
-      client.on('data', (data: Buffer) => {
-        const response = data.toString();
-        console.log('SMTP Response:', response);
-
-        if (response.startsWith('2') || response.startsWith('3')) {
-          if (step < commands.length) {
-            client.write(commands[step] + '\r\n');
-            step++;
-          } else {
-            client.end();
-            resolve(true);
-          }
-        } else {
-          client.end();
-          reject(new Error(`SMTP Error: ${response}`));
-        }
-      });
-
-      client.on('connect', () => {
-        console.log('Connected to SMTP server');
-      });
-
-      client.on('error', (err: Error) => {
-        reject(err);
-      });
-
-      client.on('end', () => {
-        resolve(step >= commands.length);
-      });
-    });
-  }
 }
 
 export const emailService = new EmailService();
+
+/**
+ * Minimal Mustache subset for the built-in templates: {{var}}, {{.}}, {{#list}}...{{/list}} over
+ * arrays (or a truthy value), {{#if flag}}...{{/if}}. Values are HTML-escaped.
+ */
+export function renderMustache(tpl: string, scope: Record<string, any>): string {
+  const esc = (v: unknown) => String(v ?? "").replace(/[<>&"']/g, ch => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#x27;" }[ch] as string));
+  const lookup = (key: string, ctx: unknown[]): unknown => {
+    if (key === ".") return ctx[ctx.length - 1];
+    for (let i = ctx.length - 1; i >= 0; i--) {
+      const c = ctx[i];
+      if (c && typeof c === "object" && key in (c as object)) return (c as any)[key];
+    }
+    return undefined;
+  };
+  const render = (src: string, ctx: unknown[]): string => {
+    // sections: {{#name}} ... {{/name}} and {{#if name}} ... {{/if}}
+    src = src.replace(/{{#if\s+(\w+)}}([\s\S]*?){{\/if}}/g, (_, name, inner) => {
+      const v = lookup(name, ctx);
+      return (Array.isArray(v) ? v.length > 0 : Boolean(v)) ? render(inner, ctx) : "";
+    });
+    src = src.replace(/{{#(\w+)}}([\s\S]*?){{\/\1}}/g, (_, name, inner) => {
+      const v = lookup(name, ctx);
+      if (Array.isArray(v)) return v.map(item => render(inner, [...ctx, item])).join("");
+      return v ? render(inner, ctx) : "";
+    });
+    return src.replace(/{{\s*([\w.]+)\s*}}/g, (_, name) => {
+      const v = lookup(name, ctx);
+      return esc(typeof v === "object" && v !== null && !Array.isArray(v) ? JSON.stringify(v) : Array.isArray(v) ? v.join(", ") : v);
+    });
+  };
+  return render(tpl, [scope]);
+}

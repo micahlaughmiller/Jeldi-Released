@@ -65,6 +65,13 @@ export default function ConnectionWizard({ isOpen, onClose, erpSystem }: Connect
 
   const system = (systems as ERPSystem[]).find((s: ERPSystem) => s.name === erpSystem);
 
+  // Systems without OAuth (Epicor, SyteLine, the demo dataset) start on the credentials step
+  useEffect(() => {
+    if (connectionMethods && !connectionMethods.oauth && connectionMethods.apiKey) {
+      setConnectionMethod("api_key");
+    }
+  }, [connectionMethods]);
+
   const testConnectionMutation = useMutation({
     mutationFn: async (data: any) => {
       const response = await apiRequest("POST", data.connector ? "/api/erp/test-credentials" : "/api/erp/test-connection", data);

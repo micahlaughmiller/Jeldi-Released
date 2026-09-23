@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { EmailStatusResponse, EmailSendRequest, EmailSendResponse } from "@shared/schema";
+import type { EmailStatusResponse, EmailSendRequest, EmailSendResponse, EmailProviderName } from "@shared/schema";
 
 interface EmailComposerProps {
   isOpen: boolean;
@@ -16,7 +16,9 @@ interface EmailComposerProps {
 }
 
 export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
-  const [provider, setProvider] = useState<"outlook" | "gmail">("outlook");
+  const [provider, setProvider] = useState<EmailProviderName>("outlook");
+  const PROVIDER_ORDER: EmailProviderName[] = ["outlook", "gmail", "smtp", "demo"];
+  const PROVIDER_LABEL: Record<EmailProviderName, string> = { outlook: "Outlook / Microsoft 365", gmail: "Gmail", smtp: "SMTP (other email)", demo: "Demo outbox (not delivered)" };
   const [template, setTemplate] = useState("custom");
   const [to, setTo] = useState("");
   const [cc, setCc] = useState("");
@@ -78,8 +80,7 @@ export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
     }
 
     // Check if provider is available
-    const providerAvailable = (provider === "outlook" && emailStatus?.outlook?.isConnected) ||
-                             (provider === "gmail" && emailStatus?.gmail?.isConnected);
+    const providerAvailable = Boolean(emailStatus?.[provider]?.isConnected);
     
     if (!providerAvailable) {
       toast({
@@ -102,25 +103,19 @@ export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
         recipient: to.split(',')[0],
         week: new Date().toISOString().slice(0, 10),
         kpis: [],
-        insights: ["Sample insight 1", "Sample insight 2"]
+        insights: []
       } : undefined,
     };
 
     sendEmailMutation.mutate(emailData);
   };
 
-  // Update provider selection when status changes
+  // Pick the first connected provider when the current one is not connected
   useEffect(() => {
-    if (emailStatus && provider in emailStatus) {
-      const currentProvider = emailStatus[provider as keyof EmailStatusResponse];
-      if (!currentProvider?.isConnected) {
-        if (emailStatus.outlook?.isConnected) {
-          setProvider("outlook");
-        } else if (emailStatus.gmail?.isConnected) {
-          setProvider("gmail");
-        }
-      }
-    }
+    if (!emailStatus) return;
+    if (emailStatus[provider]?.isConnected) return;
+    const first = PROVIDER_ORDER.find(p => emailStatus[p]?.isConnected);
+    if (first) setProvider(first);
   }, [emailStatus, provider]);
 
   return (
@@ -134,23 +129,16 @@ export default function EmailComposer({ isOpen, onClose }: EmailComposerProps) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Email Provider</Label>
-              <Select value={provider} onValueChange={(value) => setProvider(value as "outlook" | "gmail")}>
+              <Select value={provider} onValueChange={(value) => setProvider(value as EmailProviderName)}>
                 <SelectTrigger data-testid="select-email-provider">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem 
-                    value="outlook" 
-                    disabled={!emailStatus?.outlook?.isConnected}
-                  >
-                    Outlook.com {emailStatus?.outlook?.isConnected ? "✓" : "(Not connected)"}
-                  </SelectItem>
-                  <SelectItem 
-                    value="gmail"
-                    disabled={!emailStatus?.gmail?.isConnected}
-                  >
-                    Gmail {emailStatus?.gmail?.isConnected ? "✓" : "(Not connected)"}
-                  </SelectItem>
+                  {PROVIDER_ORDER.filter(p => p !== "demo" || emailStatus?.demo?.isConnected).map(p => (
+                    <SelectItem key={p} value={p} disabled={!emailStatus?.[p]?.isConnected}>
+                      {PROVIDER_LABEL[p]} {emailStatus?.[p]?.isConnected ? "✓" : "(Not connected)"}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

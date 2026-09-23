@@ -3,6 +3,8 @@ import type { ErpConnection } from "@shared/schema";
 import crypto from "crypto";
 import { isDemoEnvironment } from "./demo-data";
 import { hasConnector } from "../connectors";
+import type { ErpSnapshot } from "../connectors/types";
+import { summarizeSnapshot } from "./kpiEngine";
 
 export interface ERPSystem {
   name: string;
@@ -160,6 +162,19 @@ export const ERP_SYSTEMS: Record<string, ERPSystem> = {
   }
 };
 
+// Fictional Morton Industries dataset, offered outside production and on the demo deployment
+if (isDemoEnvironment() || process.env.NODE_ENV !== "production") {
+  ERP_SYSTEMS.demo = {
+    name: "demo",
+    displayName: "Morton Industries (Demo ERP)",
+    description: "Sample precision-machining dataset for demos and testing",
+    oauthConfig: { authUrl: "", tokenUrl: "", clientId: "", scopes: [] },
+    apiBaseUrl: "",
+    supportsApiKey: true,
+    supportsManualConfig: false,
+  };
+}
+
 export class ERPService {
   async getConnectedSystems(userId: string): Promise<ERPSystem[]> {
     const connections = await storage.getErpConnections(userId);
@@ -299,7 +314,16 @@ export class ERPService {
 
     // If user has connected systems, fetch real data
     if (connectedSystems.length > 0) {
+      const snapshots = connectedSystems.some(c => hasConnector(c.erpSystem)) ? await storage.getLatestErpSnapshots(userId) : [];
       for (const connection of connectedSystems) {
+        // Connector-backed systems (Epicor, SyteLine, demo) are summarised from the synced snapshot
+        if (hasConnector(connection.erpSystem)) {
+          const row = snapshots.find(sn => sn.connectionId === connection.id);
+          aggregatedData[connection.erpSystem] = row
+            ? summarizeSnapshot(row.snapshot as ErpSnapshot)
+            : { status: "connected, awaiting first sync", erpSystem: connection.erpSystem };
+          continue;
+        }
         try {
           // Fetch basic data from each connected ERP
           const data = await this.fetchERPData(userId, connection.erpSystem, "/summary");

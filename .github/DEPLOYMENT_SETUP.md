@@ -122,14 +122,40 @@ Add the following secrets:
    - Access Key ID → Add to GitHub as `AWS_ACCESS_KEY_ID`
    - Secret Access Key → Add to GitHub as `AWS_SECRET_ACCESS_KEY`
 
-### Option 2: GitHub OIDC with IAM Role (Most Secure)
+### Option 2: GitHub OIDC with IAM Role (what `deploy.yml` uses)
 
-Instead of long-lived credentials, use GitHub's OIDC provider:
+The workflow assumes a role through GitHub's OIDC provider; no long-lived AWS keys are stored.
 
-1. **Create IAM OIDC Provider** in AWS for GitHub
-2. **Create IAM Role** with the least-privilege policy above
-3. **Configure trust relationship** to allow GitHub Actions
-4. **Update workflow** to use `aws-actions/configure-aws-credentials` with role ARN
+1. **Create the OIDC provider** (once per AWS account):
+   IAM > Identity providers > Add provider > OpenID Connect,
+   URL `https://token.actions.githubusercontent.com`, audience `sts.amazonaws.com`.
+2. **Create the role** `GithubDeploy-micahlaughmiller-Jeldi-Released` with this trust policy
+   (replace the account id if it is not `537692431436`):
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Principal": { "Federated": "arn:aws:iam::537692431436:oidc-provider/token.actions.githubusercontent.com" },
+       "Action": "sts:AssumeRoleWithWebIdentity",
+       "Condition": {
+         "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+         "StringLike": { "token.actions.githubusercontent.com:sub": "repo:micahlaughmiller/Jeldi-Released:ref:refs/heads/main" }
+       }
+     }]
+   }
+   ```
+3. **Attach the least-privilege policy above** to the role.
+4. **Add the role ARN as the repository secret `AWS_DEPLOY_ROLE_ARN`**
+   (Settings > Secrets and variables > Actions). The workflow falls back to
+   `arn:aws:iam::537692431436:role/GithubDeploy-micahlaughmiller-Jeldi-Released` when the secret is absent.
+
+**Repository secrets the workflow needs:** `JWT_SECRET`, `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`,
+`OPENAI_API_KEY`; optional `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`,
+`MICROSOFT_CLIENT_SECRET`, `DEMO_USER_PASSWORD`.
+**Repository variables:** `DEMO_MODE` (`true` only for the demo stack), `AWS_DOMAIN`,
+`FRONTEND_URL`, `EMAIL_OAUTH_REDIRECT_URI`.
 
 See: https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
 

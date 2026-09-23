@@ -5,7 +5,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CheckCircle2, AlertCircle } from "lucide-react";
 
 /** ERP systems with a real data connector on the server (server/connectors) */
-export const CONNECTOR_SYSTEMS = ["epicor", "syteline"];
+export const CONNECTOR_SYSTEMS = ["epicor", "syteline", "demo"];
 
 interface Field {
   key: string;
@@ -20,6 +20,9 @@ interface Field {
 }
 
 const FIELDS: Record<string, Field[]> = {
+  demo: [
+    { key: "company", label: "Company name", placeholder: "Morton Industries", help: "Fictional dataset generated on every sync. Nothing is contacted." },
+  ],
   epicor: [
     { key: "instanceUrl", label: "Kinetic server URL", placeholder: "https://kinetic.example.com/EpicorERP", required: true, help: "The application server URL, without /api. For Kinetic cloud this looks like https://centralusdtapp01.epicorsaas.com/SaaS123" },
     { key: "company", label: "Company ID", placeholder: "EPIC06", required: true },
@@ -42,7 +45,9 @@ const FIELDS: Record<string, Field[]> = {
 };
 
 export function defaultCredentials(system: string): Record<string, string> {
-  return system === "syteline" ? { authMode: "ionapi" } : {};
+  if (system === "syteline") return { authMode: "ionapi" };
+  if (system === "demo") return { company: "Morton Industries" };
+  return {};
 }
 
 function visibleFields(system: string, values: Record<string, string>): Field[] {

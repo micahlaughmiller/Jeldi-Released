@@ -293,36 +293,36 @@ export class RBACService {
           "analytics.read", "analytics.create", "analytics.advanced"
         ],
         finance: [
-          "financial.read", "financial.create", "financial.update", "financial.export",
+          "erp_connections.read", "financial.read", "financial.create", "financial.update", "financial.export",
           "kpis.read", "ai.basic", "email.send", "settings.read",
           "analytics.read", "analytics.export"
         ],
         cfo: [
-          "financial.read", "financial.export",
+          "erp_connections.read", "financial.read", "financial.export",
           "kpis.read", "ai.basic", "ai.advanced",
           "email.send", "settings.read",
           "analytics.read", "analytics.export", "analytics.advanced"
         ],
         project_manager: [
-          "kpis.read", "kpis.create", "kpis.update",
+          "erp_connections.read", "kpis.read", "kpis.create", "kpis.update",
           "ai.basic", "email.send", "settings.read",
           "analytics.read", "analytics.create"
         ],
         cost_manager: [
-          "financial.read", "financial.export",
+          "erp_connections.read", "financial.read", "financial.export",
           "kpis.read", "ai.basic", "email.send", "settings.read",
           "analytics.read", "analytics.export"
         ],
         sales: [
-          "kpis.read", "ai.basic", "email.send", "settings.read",
+          "erp_connections.read", "kpis.read", "ai.basic", "email.send", "settings.read",
           "analytics.read"
         ],
         marketing: [
-          "kpis.read", "ai.basic", "email.send", "settings.read",
+          "erp_connections.read", "kpis.read", "ai.basic", "email.send", "settings.read",
           "analytics.read"
         ],
         user: [
-          "kpis.read", "ai.basic", "email.send", "email.manage", "settings.read",
+          "erp_connections.read", "kpis.read", "ai.basic", "email.send", "email.manage", "settings.read",
           "analytics.read"
         ]
       };

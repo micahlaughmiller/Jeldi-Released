@@ -10,7 +10,17 @@
         NODE_ENV: production
         JWT_SECRET: ${env:JWT_SECRET}
         DATABASE_URL: ${env:DATABASE_URL}
-        OPENAI_API_KEY: ${env:OPENAI_API_KEY}
+        TOKEN_ENCRYPTION_KEY: ${env:TOKEN_ENCRYPTION_KEY}
+        OPENAI_API_KEY: ${env:OPENAI_API_KEY, ''}
+        GOOGLE_CLIENT_ID: ${env:GOOGLE_CLIENT_ID, ''}
+        GOOGLE_CLIENT_SECRET: ${env:GOOGLE_CLIENT_SECRET, ''}
+        MICROSOFT_CLIENT_ID: ${env:MICROSOFT_CLIENT_ID, ''}
+        MICROSOFT_CLIENT_SECRET: ${env:MICROSOFT_CLIENT_SECRET, ''}
+        DEMO_MODE: ${env:DEMO_MODE, 'false'}
+        DEMO_USER_PASSWORD: ${env:DEMO_USER_PASSWORD, ''}
+        AWS_DOMAIN: ${env:AWS_DOMAIN, ''}
+        FRONTEND_URL: ${env:FRONTEND_URL, ''}
+        EMAIL_OAUTH_REDIRECT_URI: ${env:EMAIL_OAUTH_REDIRECT_URI, ''}
       iamRoleStatements:
         - Effect: Allow
           Action:

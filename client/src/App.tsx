@@ -37,6 +37,11 @@ function Router() {
           <EmailCenter />
         </AIEnabledLayout>
       </Route>
+      <Route path="/email-center">
+        <AIEnabledLayout>
+          <EmailCenter />
+        </AIEnabledLayout>
+      </Route>
       <Route path="/ai-assistant">
         <AIEnabledLayout>
           <AIAssistant />

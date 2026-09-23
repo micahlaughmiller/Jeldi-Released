@@ -15,6 +15,7 @@ import { insertUserSchema, insertKpiConfigurationSchema, insertChatHistorySchema
 
 // Type definitions
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import passport from "passport";
 import { OAuthService } from "./services/oauthService";
@@ -247,7 +248,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
 
       // Generate token and create session
-      const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+      const token = jwt.sign({ userId: user.id, jti: crypto.randomUUID() }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
       await sessionService.createSession(user.id, token, req);
       
       // Log successful registration
@@ -348,7 +349,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // Successful login - record attempt and create session
       await passwordPolicyService.recordLoginAttempt(email, true, req.ip, user.id);
       
-      const token = jwt.sign({ userId: user.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+      const token = jwt.sign({ userId: user.id, jti: crypto.randomUUID() }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
       await sessionService.createSession(user.id, token, req);
       
       await auditService.logAction({
@@ -444,7 +445,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
 
       // Generate JWT (must use { userId } format for authenticateToken middleware)
-      const token = jwt.sign({ userId: demoUser.id }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
+      const token = jwt.sign({ userId: demoUser.id, jti: crypto.randomUUID() }, getJwtSecretAtRuntime(), { expiresIn: '7d' });
       
       // Create session (must pass token as second parameter)
       await sessionService.createSession(demoUser.id, token, req);
@@ -2799,11 +2800,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     try {
       const configurations = await emailService.getEmailConfigurations(req.user.id);
       
-      // Check Outlook connection status using Replit connector
-      const outlookStatus = await emailService.checkOutlookConnection();
-      
-      res.json({ 
-        configurations, 
+      const outlookStatus = await emailService.checkOutlookConnection(req.user.id);
+
+      res.json({
+        configurations: configurations.map(c => ({ ...c, accessToken: undefined, refreshToken: undefined })),
         templates: emailService.getEmailTemplates(),
         connectionStatus: {
           outlook: outlookStatus
@@ -2816,15 +2816,24 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/email/status", authenticateToken, requirePermission("email", "manage"), asAuth(async (req, res) => {
     try {
-      const outlookStatus = await emailService.checkOutlookConnection();
+      const outlookStatus = await emailService.checkOutlookConnection(req.user.id);
       const configurations = await emailService.getEmailConfigurations(req.user.id);
-      const gmailConfig = configurations.find(c => c.provider === 'gmail' && c.isActive);
-      
+      const gmailConfig = configurations.find(c => c.provider === 'gmail' && c.isActive && c.accessToken);
+      const smtpConfig = configurations.find(c => c.provider === 'smtp' && c.isActive);
+
       res.json({
         outlook: outlookStatus,
         gmail: {
           isConnected: !!gmailConfig,
           email: gmailConfig?.email
+        },
+        smtp: {
+          isConnected: !!smtpConfig,
+          email: smtpConfig?.email
+        },
+        demo: {
+          isConnected: emailService.isDemoOutboxEnabled(),
+          email: emailService.isDemoOutboxEnabled() ? "outbox (messages are captured, not delivered)" : undefined
         }
       });
     } catch (error) {
@@ -2929,29 +2938,31 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         // Validate SMTP configuration data with Zod (fixes Boolean parsing vulnerability)
         const smtpConfig = smtpConfigRequestSchema.parse(req.body);
         
-        // Create SMTP configuration with encrypted credentials
+        // Prove the credentials work before storing them
+        try {
+          await emailService.verifySmtp({ host: smtpConfig.host, port: smtpConfig.port, secure: smtpConfig.secure, auth: { user: smtpConfig.username, pass: smtpConfig.password } });
+        } catch (verifyError) {
+          return res.status(400).json({ message: `SMTP login failed: ${(verifyError as Error).message}` });
+        }
+
         const encryptedPassword = await emailService.encryptToken(smtpConfig.password);
-        const emailConfig = {
-          userId: req.user.id,
-          provider: 'smtp',
-          email: smtpConfig.username,
-          accessToken: JSON.stringify({
-            host: smtpConfig.host,
-            port: smtpConfig.port,
-            secure: smtpConfig.secure, // Properly parsed boolean from Zod
-            auth: {
-              user: smtpConfig.username,
-              pass: encryptedPassword
-            }
-          }),
-          isActive: true
-        };
-        
-        await storage.createEmailConfiguration(emailConfig);
-        
-        res.json({ 
-          message: "SMTP configuration saved successfully",
-          isConnected: true 
+        const fromAddress = (req.body.fromAddress as string | undefined)?.trim() || smtpConfig.username;
+        const stored = JSON.stringify({
+          host: smtpConfig.host,
+          port: smtpConfig.port,
+          secure: smtpConfig.secure,
+          auth: { user: smtpConfig.username, pass: encryptedPassword }
+        });
+        const existing = (await emailService.getEmailConfigurations(req.user.id)).find(c => c.provider === 'smtp');
+        if (existing) {
+          await storage.updateEmailConfiguration(existing.id, { email: fromAddress, accessToken: stored, isActive: true });
+        } else {
+          await storage.createEmailConfiguration({ userId: req.user.id, provider: 'smtp', email: fromAddress, accessToken: stored, isActive: true });
+        }
+
+        res.json({
+          message: "SMTP configuration verified and saved",
+          isConnected: true
         });
       }
     } catch (error) {
@@ -3016,6 +3027,24 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       res.redirect("/email-center?status=error&message=" + encodeURIComponent((error as Error).message));
     }
   });
+
+  // Demo outbox: what the demo provider "sent" (captured, never delivered)
+  app.get("/api/email/outbox", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
+    res.json({ enabled: emailService.isDemoOutboxEnabled(), messages: emailService.getOutbox(req.user.id) });
+  }));
+
+  app.delete("/api/email/disconnect/:provider", authenticateToken, requirePermission("email", "manage"), asAuth(async (req, res) => {
+    try {
+      const { provider } = emailProviderParamsSchema.parse(req.params);
+      const configs = (await emailService.getEmailConfigurations(req.user.id)).filter(c => c.provider === provider);
+      for (const c of configs) {
+        await storage.updateEmailConfiguration(c.id, { isActive: false, accessToken: null, refreshToken: null, tokenExpiry: null });
+      }
+      res.json({ message: `${provider} disconnected`, isConnected: false });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to disconnect email provider", error: (error as Error).message });
+    }
+  }));
 
   app.post("/api/email/send", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
     try {

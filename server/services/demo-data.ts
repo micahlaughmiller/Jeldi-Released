@@ -1,7 +1,9 @@
 import { db } from "../db";
-import { users, erpConnections, kpiConfigurations, kpiData, dashboardKpiPreferences, dashboardChartPreferences } from "@shared/schema";
+import { users, erpConnections, kpiConfigurations, dashboardKpiPreferences, dashboardChartPreferences } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
+import { storage } from "../storage";
+import { syncUser } from "./syncService";
 import crypto from "crypto";
 
 // Demo accounts share one password. Set DEMO_USER_PASSWORD to make it known; otherwise a
@@ -24,52 +26,30 @@ export const DEMO_USERS = [
   {
     email: "cfo@demo.jeldi.app",
     password: DEMO_PASSWORD,
-    name: "Sarah CFO",
+    name: "Sarah Morton",
     role: "cfo" as const,
   },
   {
     email: "coo@demo.jeldi.app",
     password: DEMO_PASSWORD,
-    name: "James COO",
+    name: "James Whitfield",
     role: "ops_manager" as const,
   },
   {
     email: "admin@demo.jeldi.app",
     password: DEMO_PASSWORD,
-    name: "Admin User",
+    name: "Morton Admin",
     role: "admin" as const,
   },
 ];
 
-export const DEMO_ERP_SYSTEMS = [
-  {
-    name: "SAP S/4HANA",
-    type: "sap" as const,
-    status: "active" as const,
-    config: {
-      apiUrl: "https://demo-sap.jeldi.app/api",
-      clientId: "demo-sap-client",
-    },
-  },
-  {
-    name: "NetSuite",
-    type: "netsuite" as const,
-    status: "active" as const,
-    config: {
-      apiUrl: "https://demo-netsuite.jeldi.app/api",
-      accountId: "demo-account-123",
-    },
-  },
-  {
-    name: "Dynamics 365",
-    type: "dynamics365" as const,
-    status: "active" as const,
-    config: {
-      apiUrl: "https://demo-dynamics.jeldi.app/api",
-      tenantId: "demo-tenant-456",
-    },
-  },
-];
+/** The demo ERP connection every demo user gets: the generated Morton Industries dataset */
+export const DEMO_ERP_CONNECTION = {
+  erpSystem: "demo",
+  connectionType: "credentials",
+  authMethod: "api_key",
+  config: { company: "Morton Industries" },
+};
 
 // Universal KPIs that work across all ERP systems
 export const UNIVERSAL_KPIS = [
@@ -272,35 +252,24 @@ export async function initializeDemoERPConnections(demoUsers: any[]) {
   }
 
   for (const user of demoUsers) {
-    for (const erpSystem of DEMO_ERP_SYSTEMS) {
-      try {
-        // Check if ERP connection already exists
-        const existing = await db
-          .select()
-          .from(erpConnections)
-          .where(eq(erpConnections.userId, user.id));
-
-        const hasExisting = existing.some((e: any) => e.erpSystem === erpSystem.type);
-
-        if (hasExisting) {
-          console.log(`Demo ERP ${erpSystem.name} for ${user.email} already exists, skipping`);
-          continue;
-        }
-
-        // Create demo ERP connection
-        await db.insert(erpConnections).values({
-          userId: user.id,
-          erpSystem: erpSystem.type, // must match the ERP_SYSTEMS key, not the display name
-          isConnected: true,
-          config: erpSystem.config as any,
-          connectionType: 'custom',
-          authMethod: 'api_key',
-        });
-
-        console.log(`Created demo ERP connection: ${erpSystem.name} for ${user.email}`);
-      } catch (error) {
-        console.error(`Failed to create demo ERP ${erpSystem.name} for ${user.email}:`, error);
+    try {
+      const existing = await db.select().from(erpConnections).where(eq(erpConnections.userId, user.id));
+      if (existing.some((e: any) => e.erpSystem === DEMO_ERP_CONNECTION.erpSystem)) {
+        console.log(`Demo ERP connection for ${user.email} already exists, skipping`);
+        continue;
       }
+      await db.insert(erpConnections).values({
+        userId: user.id,
+        erpSystem: DEMO_ERP_CONNECTION.erpSystem,
+        isConnected: true,
+        connectionType: DEMO_ERP_CONNECTION.connectionType,
+        authMethod: DEMO_ERP_CONNECTION.authMethod,
+        config: DEMO_ERP_CONNECTION.config as any,
+        metadata: { displayName: "Morton Industries (Demo ERP)" } as any,
+      });
+      console.log(`Created demo ERP connection (Morton Industries) for ${user.email}`);
+    } catch (error) {
+      console.error(`Failed to create demo ERP connection for ${user.email}:`, error);
     }
   }
 }
@@ -345,14 +314,7 @@ export async function initializeDemoKPIs(demoUsers: any[]) {
           refreshInterval: 30,
         }).returning();
 
-        // Create demo KPI data
-        await db.insert(kpiData).values({
-          kpiId: config.id,
-          value: kpi.demoValue,
-          change: kpi.demoChange,
-        });
-
-        console.log(`Created KPI configuration and data: ${kpi.name} for ${user.email}`);
+        console.log(`Created KPI configuration: ${kpi.name} for ${user.email} (values come from the demo ERP sync)`);
       }
 
       // Create dashboard preferences for the first 5 KPIs (universal defaults)
@@ -440,6 +402,14 @@ export async function initializeAllDemoData() {
     await initializeDemoERPConnections(demoUsers);
     await initializeDemoKPIs(demoUsers);
     await initializeDemoCharts(demoUsers);
+
+    // Pull the Morton Industries snapshot so KPIs, charts and analytics have values immediately
+    for (const user of demoUsers) {
+      if ((await storage.getLatestErpSnapshots(user.id)).length === 0) {
+        const results = await syncUser(user.id);
+        for (const r of results) console.log(`Demo sync ${r.erpSystem} for ${user.email}: ${r.ok ? "ok" : r.message}`);
+      }
+    }
     
     console.log('✅ Demo data initialization complete');
   } catch (error) {

@@ -828,7 +828,12 @@ export interface EmailProviderStatus {
 export interface EmailStatusResponse {
   gmail?: EmailProviderStatus;
   outlook?: EmailProviderStatus;
+  smtp?: EmailProviderStatus;
+  /** Demo outbox: messages are captured, not delivered (demo / non-production only) */
+  demo?: EmailProviderStatus;
 }
+
+export type EmailProviderName = "gmail" | "outlook" | "smtp" | "demo";
 
 export interface EmailConnectResponse {
   authUrl?: string;
@@ -837,7 +842,7 @@ export interface EmailConnectResponse {
 }
 
 export interface EmailSendRequest {
-  provider: 'gmail' | 'outlook';
+  provider: EmailProviderName;
   to: string[];
   cc?: string[];
   subject: string;
@@ -861,7 +866,7 @@ export interface EmailSendResponse {
 // Email API validation schemas for secure input handling
 const emailSchema = z.string().email({ message: "Invalid email address" });
 const emailArraySchema = z.array(emailSchema).min(1, { message: "At least one email address required" });
-const providerSchema = z.enum(["gmail", "outlook", "smtp"], { message: "Invalid email provider" });
+const providerSchema = z.enum(["gmail", "outlook", "smtp", "demo"], { message: "Invalid email provider" });
 
 // Email send request schema with comprehensive validation
 export const emailSendRequestSchema = z.object({
