@@ -150,26 +150,29 @@ export const ADDITIONAL_KPIS = [
 ];
 
 // Default charts for demo users
+// Only chart types that have a client component (see client/src/components/dashboard/draggable-chart-grid.tsx)
+export const IMPLEMENTED_CHART_TYPES = ["revenue_90d", "unpaid_invoices", "refunds", "cancellations"];
+
 export const DEMO_CHARTS = [
   {
-    chartType: "cashflow_90d_60d_projected",
+    chartType: "revenue_90d",
     position: 1,
     size: "large",
   },
   {
-    chartType: "revenue_90d",
+    chartType: "unpaid_invoices",
     position: 2,
-    size: "large",
+    size: "medium",
   },
   {
-    chartType: "unpaid_invoices",
+    chartType: "refunds",
     position: 3,
     size: "medium",
   },
   {
-    chartType: "orders_over_time",
+    chartType: "cancellations",
     position: 4,
-    size: "large",
+    size: "medium",
   },
 ];
 
@@ -356,19 +359,24 @@ export async function initializeDemoCharts(demoUsers: any[]) {
 
   for (const user of demoUsers) {
     try {
-      // Check if user already has chart preferences
-      const existingCharts = await db
+      // Drop chart preferences left over from earlier seeds that point at chart types with no component
+      let existingCharts = await db
         .select()
         .from(dashboardChartPreferences)
         .where(eq(dashboardChartPreferences.userId, user.id));
-
-      if (existingCharts.length > 0) {
-        console.log(`User ${user.email} already has ${existingCharts.length} chart preferences, skipping`);
-        continue;
+      const stale = existingCharts.filter(c => !IMPLEMENTED_CHART_TYPES.includes(c.chartType));
+      for (const c of stale) {
+        await db.delete(dashboardChartPreferences).where(eq(dashboardChartPreferences.id, c.id));
+      }
+      if (stale.length > 0) {
+        console.log(`Removed ${stale.length} unimplemented chart preference(s) for ${user.email}`);
+        existingCharts = existingCharts.filter(c => !stale.includes(c));
       }
 
-      // Create default chart preferences
+      // Add any default chart the user does not have yet (keeps user-added charts untouched)
+      const have = new Set(existingCharts.map(c => c.chartType));
       for (const chart of DEMO_CHARTS) {
+        if (have.has(chart.chartType)) continue;
         await db.insert(dashboardChartPreferences).values({
           userId: user.id,
           chartType: chart.chartType,

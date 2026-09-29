@@ -2575,10 +2575,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         
         // Create 4 default charts that work for all users
         const defaultCharts = [
-          { chartType: 'cashflow_90d_60d_projected', position: 1, size: 'large' },
-          { chartType: 'revenue_90d', position: 2, size: 'large' },
-          { chartType: 'unpaid_invoices', position: 3, size: 'medium' },
-          { chartType: 'orders_over_time', position: 4, size: 'large' },
+          { chartType: 'revenue_90d', position: 1, size: 'large' },
+          { chartType: 'unpaid_invoices', position: 2, size: 'medium' },
+          { chartType: 'refunds', position: 3, size: 'medium' },
+          { chartType: 'cancellations', position: 4, size: 'medium' },
         ];
         
         for (const chart of defaultCharts) {
@@ -2625,7 +2625,9 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
       // Filter charts based on user role
       const userRole = user.role || 'user';
-      const filteredCharts = availableCharts.filter(chart => chart.roles.includes(userRole));
+      // Only chart types with a client component (draggable-chart-grid.tsx); the rest are future work
+      const implementedCharts = new Set(['revenue_90d', 'unpaid_invoices', 'refunds', 'cancellations']);
+      const filteredCharts = availableCharts.filter(chart => chart.roles.includes(userRole) && implementedCharts.has(chart.id));
 
       res.json(filteredCharts);
     } catch (error) {
