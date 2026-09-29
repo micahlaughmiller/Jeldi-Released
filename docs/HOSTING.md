@@ -57,7 +57,7 @@ variables.
    repository, branch `main`.
 2. Settings:
    * Runtime: Node
-   * Build command: `npm ci --include=dev && npm run build`
+   * Build command: `npm ci --include=dev && npm run build && npm run db:push -- --force`
    * Start command: `npm start`
    * Instance: Starter (the free tier sleeps after 15 minutes and the sync scheduler with it)
 3. Environment variables (Environment tab):
