@@ -7,7 +7,7 @@ interface KPIWidgetProps {
   };
   data?: {
     value: string;
-    change: number;
+    change: number | string | null; // decimal column: string from the API, null without a prior period
     timestamp: Date;
   };
   position: number;
@@ -37,7 +37,9 @@ export default function KPIWidget({ kpi, data, position, onDelete, preferenceId 
   ];
   const getKPIColor = (position: number) => colorClasses[position % colorClasses.length];
 
-  const isPositive = data ? data.change >= 0 : true;
+  // `change` arrives as a decimal string from Postgres, or null when there is no prior period
+  const change = data?.change == null || data.change === "" ? null : Number(data.change);
+  const isPositive = change == null || Number.isNaN(change) ? true : change >= 0;
   const color = getKPIColor(position);
 
   return (
@@ -68,7 +70,7 @@ export default function KPIWidget({ kpi, data, position, onDelete, preferenceId 
         }`}>
           <i className={`fas fa-arrow-${isPositive ? "up" : "down"}`}></i>
           <span data-testid={`kpi-change-${kpi.type}`}>
-            {data ? `${isPositive ? "+" : ""}${data.change.toFixed(1)}%` : "+0.0%"}
+            {change == null || Number.isNaN(change) ? "—" : `${isPositive ? "+" : ""}${change.toFixed(1)}%`}
           </span>
         </div>
       </div>
@@ -83,7 +85,7 @@ export default function KPIWidget({ kpi, data, position, onDelete, preferenceId 
         <div className="mt-3 h-1 bg-muted rounded-full overflow-hidden">
           <div 
             className={`h-full ${color.bar} rounded-full transition-all duration-500`}
-            style={{ width: `${Math.min(Math.abs(data?.change || 0) * 5, 100)}%` }}
+            style={{ width: `${Math.min(Math.abs(change ?? 0) * 5, 100)}%` }}
           ></div>
         </div>
       </div>

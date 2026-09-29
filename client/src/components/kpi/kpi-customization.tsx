@@ -261,8 +261,8 @@ export default function KpiCustomization({ onClose }: KpiCustomizationProps) {
                   {kpi.latestData && (
                     <div className="border-t pt-3">
                       <p className="font-semibold">{kpi.latestData.value}</p>
-                      <p className={`text-sm ${kpi.latestData.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {kpi.latestData.change >= 0 ? '+' : ''}{kpi.latestData.change.toFixed(1)}%
+                      <p className={`text-sm ${Number(kpi.latestData.change ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {kpi.latestData.change == null ? '—' : `${Number(kpi.latestData.change) >= 0 ? '+' : ''}${Number(kpi.latestData.change).toFixed(1)}%`}
                       </p>
                     </div>
                   )}

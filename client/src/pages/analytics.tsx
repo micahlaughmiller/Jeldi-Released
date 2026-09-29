@@ -452,8 +452,8 @@ export default function Analytics() {
                           <div key={kpi.id} className="p-4 border rounded-lg" data-testid={`kpi-${kpi.type}`}>
                             <div className="flex items-center justify-between mb-2">
                               <h4 className="font-medium">{kpi.name}</h4>
-                              <Badge variant={kpi.change >= 0 ? "default" : "destructive"}>
-                                {kpi.change >= 0 ? "+" : ""}{kpi.change.toFixed(1)}%
+                              <Badge variant={Number(kpi.change ?? 0) >= 0 ? "default" : "destructive"}>
+                                {kpi.change == null ? "—" : `${Number(kpi.change) >= 0 ? "+" : ""}${Number(kpi.change).toFixed(1)}%`}
                               </Badge>
                             </div>
                             <p className="text-2xl font-bold">{kpi.value}</p>
