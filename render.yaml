@@ -1,0 +1,33 @@
+# Render blueprint: the Jeldi demo instance (Morton Industries data) backed by a Supabase database.
+# Render > New > Blueprint > pick this repo. It prompts for DATABASE_URL and DEMO_USER_PASSWORD.
+services:
+  - type: web
+    name: jeldi-demo
+    runtime: node
+    plan: starter            # free tier sleeps after 15 min and stops the ERP sync scheduler
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/security/policy
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEMO_MODE
+        value: "true"
+      - key: DATABASE_URL          # Supabase > Project Settings > Database > Session pooler (port 5432)
+        sync: false
+      - key: DEMO_USER_PASSWORD    # login for cfo@/coo@/admin@demo.jeldi.app
+        sync: false
+      - key: OPENAI_API_KEY        # optional; AI assistant is disabled without it
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: FRONTEND_URL          # set to the service URL Render assigns, e.g. https://jeldi-demo.onrender.com
+        sync: false
+      - key: ALLOWED_DOMAINS       # same hostname, without https://
+        sync: false
+      - key: ERP_SYNC_INTERVAL_MINUTES
+        value: "15"

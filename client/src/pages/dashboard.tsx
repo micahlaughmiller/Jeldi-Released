@@ -77,12 +77,9 @@ export default function Dashboard() {
       const token = localStorage.getItem("token");
       const userData = localStorage.getItem("user");
       
-      // Check if on demo.jeldi.app and no auth token
-      const isDemoEnv = window.location.hostname.includes('demo.jeldi.app');
-      
       if (!token || !userData) {
-        // Auto-login for demo environment
-        if (isDemoEnv) {
+        // Auto-login when the server runs in demo mode (it answers 403 otherwise)
+        {
           try {
             const response = await fetch(getApiUrl('/api/auth/demo-login'), {
               method: 'POST',

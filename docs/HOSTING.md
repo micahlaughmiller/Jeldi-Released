@@ -34,7 +34,24 @@ default; set `DATABASE_SSL=verify` once you have the Supabase CA in your trust s
 Supabase Auth, Storage and Row Level Security are not used; Jeldi manages its own users, JWTs and
 sessions in its own tables.
 
-## App on Render (simplest long-running host)
+## Demo instance in a few clicks (Render blueprint)
+
+`render.yaml` in the repo root describes the demo service with `DEMO_MODE=true` already set and
+the two secrets generated for you.
+
+1. https://render.com > **New > Blueprint** > connect `micahlaughmiller/Jeldi-Released`.
+2. When prompted, paste the Supabase session-pooler URL as `DATABASE_URL` and choose a
+   `DEMO_USER_PASSWORD`. `OPENAI_API_KEY` can be left blank (AI assistant off).
+3. After the first deploy, copy the service URL Render assigned (e.g.
+   `https://jeldi-demo.onrender.com`) into `FRONTEND_URL`, and its hostname into
+   `ALLOWED_DOMAINS`, then redeploy once.
+4. Open the URL and press **View Demo**. The first start seeds Morton Industries into Supabase
+   (30-60 s on the first boot); every later push to `main` redeploys automatically.
+
+A `Dockerfile` is also included for Railway, Fly.io or Cloud Run with the same environment
+variables.
+
+## App on Render (manual web service)
 
 1. https://render.com > **New > Web Service** > connect the `micahlaughmiller/Jeldi-Released`
    repository, branch `main`.

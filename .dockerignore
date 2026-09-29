@@ -1,0 +1,13 @@
+node_modules
+dist
+data
+.env
+.env.*
+.git
+.github
+.serverless
+amplify
+attached_assets
+deployment
+docs
+*.md

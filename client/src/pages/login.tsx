@@ -362,7 +362,20 @@ export default function Login() {
                 Explore our platform with pre-populated KPIs, charts, and realistic enterprise data
               </p>
               <Button
-                onClick={() => window.location.href = "https://demo.jeldi.app/dashboard"}
+                onClick={async () => {
+                  // If this deployment runs in demo mode, log straight in; otherwise send to the hosted demo
+                  try {
+                    const res = await fetch(getApiUrl("/api/auth/demo-login"), { method: "POST" });
+                    if (res.ok) {
+                      const data = await res.json();
+                      localStorage.setItem("token", data.token);
+                      localStorage.setItem("user", JSON.stringify(data.user));
+                      setLocation("/dashboard");
+                      return;
+                    }
+                  } catch { /* fall through */ }
+                  window.location.href = "https://demo.jeldi.app/dashboard";
+                }}
                 variant="outline"
                 className="w-full"
                 data-testid="button-view-demo"
