@@ -6,7 +6,7 @@ services:
     runtime: node
     plan: starter            # free tier sleeps after 15 min and stops the ERP sync scheduler
     branch: main
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build   # NODE_ENV=production would otherwise skip vite/esbuild
     startCommand: npm start
     healthCheckPath: /api/security/policy
     autoDeploy: true
