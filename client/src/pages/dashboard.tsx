@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import Sidebar from "@/components/layout/sidebar";
 import Header from "@/components/layout/header";
 import DraggableKPIGrid from "@/components/dashboard/draggable-kpi-grid";
+import KpiDetailModal from "@/components/dashboard/kpi-detail-modal";
 import KPISelector from "@/components/modals/kpi-selector";
 import DraggableChartGrid from "@/components/dashboard/draggable-chart-grid";
 import ChartSelector from "@/components/modals/chart-selector";
@@ -53,6 +54,7 @@ export default function Dashboard() {
   
   // Real-time data hook
   const { kpiData, erpSystems, connectionStatus } = useRealtimeData();
+  const [openKpi, setOpenKpi] = useState<{ type: string; name: string } | null>(null);
 
   // Fetch KPI Preferences
   const { data: kpiPreferencesData } = useQuery<{ preferences: any[]; defaults: string[] }>({
@@ -185,7 +187,9 @@ export default function Dashboard() {
             <DraggableKPIGrid
               preferences={kpiPreferencesData?.preferences || []}
               onCustomize={() => setIsKPISelectorOpen(true)}
+              onOpenKpi={(type, name) => setOpenKpi({ type, name })}
             />
+            <KpiDetailModal type={openKpi?.type ?? null} name={openKpi?.name} onClose={() => setOpenKpi(null)} />
 
             {/* Charts Section */}
             <DraggableChartGrid

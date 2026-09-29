@@ -6,7 +6,7 @@ import { db } from "./db";
 import { isDemoEnvironment } from "./services/demo-data";
 import { hasConnector, buildConnector, splitCredentials } from "./connectors";
 import { syncUser, syncConnection, latestSnapshotForUser } from "./services/syncService";
-import { revenue90d, unpaidInvoices, refunds30d, cancellations30d, monthlyRevenue, businessMetrics as liveBusinessMetrics } from "./services/kpiEngine";
+import { revenue90d, unpaidInvoices, refunds30d, cancellations30d, monthlyRevenue, businessMetrics as liveBusinessMetrics, computeKpis, kpiTrend, kpiDrilldown, KPI_TYPES, type KpiType } from "./services/kpiEngine";
 import { sql } from "drizzle-orm";
 import { erpService } from "./services/erpService";
 import { emailService } from "./services/emailService";
@@ -2263,6 +2263,34 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
+  // Drill-down: definition, 12-week trend, stored history and the records behind one KPI
+  app.get("/api/kpis/:type/details", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
+    try {
+      const type = req.params.type as KpiType;
+      if (!(KPI_TYPES as readonly string[]).includes(type)) {
+        return res.status(404).json({ available: false, message: `Unknown KPI type: ${req.params.type}` });
+      }
+      const snapshot = await latestSnapshotForUser(req.user.id);
+      if (!snapshot) {
+        return res.json({ available: false, message: "No ERP data has been synced yet. Connect an ERP and run a sync." });
+      }
+      const now = new Date();
+      const kpi = computeKpis(snapshot, now)[type];
+      const config = (await storage.getKpiConfigurations(req.user.id)).find(k => k.type === type);
+      const history = config ? (await storage.getKpiDataHistory(config.id, 60)).map(h => ({ timestamp: h.timestamp, value: h.value, change: h.change })) : [];
+      res.json({
+        available: true,
+        kpi: { type: kpi.type, value: kpi.value, change: kpi.change, basis: kpi.basis, raw: kpi.raw },
+        trend: kpiTrend(snapshot, type, now),
+        history,
+        drilldown: kpiDrilldown(snapshot, type, now),
+        dataAsOf: snapshot.fetchedAt || null,
+      });
+    } catch (error) {
+      res.status(500).json({ available: false, message: (error as Error).message });
+    }
+  }));
+
   app.put("/api/kpis/:id", authenticateToken, requirePermission("kpis", "update"), asAuth(async (req, res) => {
     try {
       const { id } = req.params;
@@ -2348,13 +2376,9 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         preferences = await storage.getDashboardKpiPreferences(req.user.id);
       }
       
-      // Fetch latest data for each KPI
-      const preferencesWithData = await Promise.all(
-        preferences.map(async (pref) => {
-          const latestData = await storage.getLatestKpiData(pref.kpiConfig.id);
-          return { ...pref, latestData };
-        })
-      );
+      // Latest value for every KPI in one query
+      const latest = await storage.getLatestKpiDataForUser(req.user.id);
+      const preferencesWithData = preferences.map(pref => ({ ...pref, latestData: latest.get(pref.kpiConfig.id) }));
       
       res.json({ preferences: preferencesWithData, defaults: [] });
     } catch (error) {
@@ -3864,10 +3888,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     try {
       // Fetch latest KPI data (same logic as WebSocket implementation)
       const kpis = await storage.getKpiConfigurations(req.user.id);
+      const latest = await storage.getLatestKpiDataForUser(req.user.id);
       const kpiUpdates = [];
-      
+
       for (const kpi of kpis.slice(0, 5)) { // Limit to 5 KPIs for performance
-        const latestData = await storage.getLatestKpiData(kpi.id);
+        const latestData = latest.get(kpi.id);
         if (latestData) {
           kpiUpdates.push({
             id: kpi.id,

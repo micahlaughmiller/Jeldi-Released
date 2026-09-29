@@ -1,4 +1,5 @@
 import express from "express";
+import compression from "compression";
 import serverless from "serverless-http";
 import type { APIGatewayProxyHandler, APIGatewayProxyEvent, Context } from "aws-lambda";
 import { registerRoutes } from "./routes";
@@ -19,6 +20,7 @@ const app = express();
 app.set('trust proxy', true);
 
 // Basic middleware
+app.use(compression());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 

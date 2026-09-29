@@ -290,7 +290,15 @@ export class DatabaseStorage implements IStorage {
     return rows.map(r => this.decryptConnection(r));
   }
 
+  // Latest-snapshot cache: the snapshot JSON is megabytes and every chart/analytics request needs it
+  private snapshotCache = new Map<string, { at: number; rows: ErpSnapshotRow[] }>();
+  private static readonly SNAPSHOT_TTL_MS = 5 * 60 * 1000;
+  invalidateSnapshotCache(userId?: string) {
+    if (userId) this.snapshotCache.delete(userId); else this.snapshotCache.clear();
+  }
+
   async saveErpSnapshot(row: InsertErpSnapshotRow): Promise<ErpSnapshotRow> {
+    this.invalidateSnapshotCache(row.userId);
     const [saved] = await db.insert(erpSnapshots).values(row).returning();
     // Keep only the newest few snapshots per connection
     const stale = await db.select({ id: erpSnapshots.id }).from(erpSnapshots)
@@ -305,6 +313,14 @@ export class DatabaseStorage implements IStorage {
 
   /** Newest snapshot for each of the user's still-connected ERP connections */
   async getLatestErpSnapshots(userId: string): Promise<ErpSnapshotRow[]> {
+    const cached = this.snapshotCache.get(userId);
+    if (cached && Date.now() - cached.at < DatabaseStorage.SNAPSHOT_TTL_MS) return cached.rows;
+    const rows = await this.loadLatestErpSnapshots(userId);
+    this.snapshotCache.set(userId, { at: Date.now(), rows });
+    return rows;
+  }
+
+  private async loadLatestErpSnapshots(userId: string): Promise<ErpSnapshotRow[]> {
     const connected = new Set(
       (await db.select({ id: erpConnections.id }).from(erpConnections)
         .where(and(eq(erpConnections.userId, userId), eq(erpConnections.isConnected, true)))).map(r => r.id)
@@ -345,6 +361,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateErpConnection(id: string, updates: Partial<ErpConnection>): Promise<ErpConnection | undefined> {
+    if (updates.isConnected !== undefined) this.invalidateSnapshotCache();
     // Encrypt sensitive fields if they are being updated
     const encryptedUpdates = { ...updates };
     if (updates.accessToken !== undefined) {
@@ -408,6 +425,18 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(kpiData.timestamp))
       .limit(1);
     return data || undefined;
+  }
+
+  /** Newest kpi_data row per KPI configuration for a user, in one query */
+  async getLatestKpiDataForUser(userId: string): Promise<Map<string, KpiData>> {
+    const rows = await db.selectDistinctOn([kpiData.kpiId], {
+      id: kpiData.id, kpiId: kpiData.kpiId, value: kpiData.value, change: kpiData.change, timestamp: kpiData.timestamp,
+    })
+      .from(kpiData)
+      .innerJoin(kpiConfigurations, eq(kpiData.kpiId, kpiConfigurations.id))
+      .where(eq(kpiConfigurations.userId, userId))
+      .orderBy(kpiData.kpiId, desc(kpiData.timestamp));
+    return new Map(rows.map(r => [r.kpiId, r as KpiData]));
   }
 
   async createKpiData(data: InsertKpiData): Promise<KpiData> {

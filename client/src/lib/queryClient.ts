@@ -1,8 +1,19 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getApiUrl } from "./api-config";
 
+/** A 401 with a stored token means the session expired: drop it and go to the login page once */
+function handleExpiredSession(res: Response) {
+  if (res.status !== 401 || typeof window === "undefined") return;
+  if (!localStorage.getItem("token")) return;
+  if (window.location.pathname.startsWith("/login")) return;
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  window.location.assign("/login?expired=1");
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
+    handleExpiredSession(res);
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }

@@ -32,7 +32,7 @@ interface KPIPreference {
   };
   latestData?: {
     value: string;
-    change: number;
+    change: number | string | null;
     timestamp: Date;
   };
 }
@@ -40,15 +40,17 @@ interface KPIPreference {
 interface DraggableKPIGridProps {
   preferences: KPIPreference[];
   onCustomize: () => void;
+  onOpenKpi?: (type: string, name: string) => void;
 }
 
 interface SortableKPIProps {
   preference: KPIPreference;
   index: number;
   onDelete: (id: string) => void;
+  onOpen?: (type: string, name: string) => void;
 }
 
-function SortableKPI({ preference, index, onDelete }: SortableKPIProps) {
+function SortableKPI({ preference, index, onDelete, onOpen }: SortableKPIProps) {
   const {
     attributes,
     listeners,
@@ -88,6 +90,7 @@ function SortableKPI({ preference, index, onDelete }: SortableKPIProps) {
         position={index}
         onDelete={onDelete}
         preferenceId={preference.id}
+        onOpen={onOpen}
       />
     </div>
   );
@@ -107,7 +110,7 @@ function EmptyKPISlot({ index }: { index: number }) {
   );
 }
 
-export default function DraggableKPIGrid({ preferences, onCustomize }: DraggableKPIGridProps) {
+export default function DraggableKPIGrid({ preferences, onCustomize, onOpenKpi }: DraggableKPIGridProps) {
   const { toast } = useToast();
   const [items, setItems] = useState(preferences);
 
@@ -234,7 +237,7 @@ export default function DraggableKPIGrid({ preferences, onCustomize }: Draggable
           >
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
               {displayItems.map((preference, index) => (
-                <SortableKPI
+                <SortableKPI onOpen={onOpenKpi}
                   key={preference.id}
                   preference={preference}
                   index={index}

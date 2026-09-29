@@ -13,9 +13,11 @@ interface KPIWidgetProps {
   position: number;
   onDelete?: (id: string) => void;
   preferenceId?: string;
+  /** Open the drill-down for this KPI */
+  onOpen?: (type: string, name: string) => void;
 }
 
-export default function KPIWidget({ kpi, data, position, onDelete, preferenceId }: KPIWidgetProps) {
+export default function KPIWidget({ kpi, data, position, onDelete, preferenceId, onOpen }: KPIWidgetProps) {
   const getKPIIcon = (type: string) => {
     switch (type) {
       case "revenue": return "fas fa-dollar-sign";
@@ -43,9 +45,14 @@ export default function KPIWidget({ kpi, data, position, onDelete, preferenceId 
   const color = getKPIColor(position);
 
   return (
-    <div 
-      className="bg-card rounded-xl border border-border p-6 hover:shadow-lg transition-shadow relative group" 
+    <div
+      className={`bg-card rounded-xl border border-border p-6 hover:shadow-lg transition-shadow relative group ${onOpen ? "cursor-pointer" : ""}`}
       data-testid={`kpi-widget-${kpi.type}`}
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      title={onOpen ? "Click for details" : undefined}
+      onClick={() => onOpen?.(kpi.type, kpi.name)}
+      onKeyDown={(e) => { if (onOpen && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onOpen(kpi.type, kpi.name); } }}
     >
       {onDelete && preferenceId && (
         <button

@@ -287,6 +287,116 @@ export function summarizeSnapshot(snapshot: ErpSnapshot, now: Date = new Date())
   };
 }
 
+// ---- drill-down ---------------------------------------------------------------------------
+
+/** One KPI value per week for the last `weeks` weeks (30-day window ending each week) */
+export function kpiTrend(snapshot: ErpSnapshot, type: KpiType, now: Date = new Date(), weeks = 12): Array<{ date: string; value: number | null }> {
+  const out: Array<{ date: string; value: number | null }> = [];
+  for (let w = weeks - 1; w >= 0; w--) {
+    const at = new Date(now.getTime() - w * 7 * DAY);
+    out.push({ date: at.toISOString().slice(0, 10), value: computeKpis(snapshot, at)[type].raw });
+  }
+  return out;
+}
+
+export interface DrilldownColumn { key: string; label: string; kind?: "money" | "number" | "percent" | "date" | "text" | "days"; }
+export interface Drilldown { title: string; note: string; columns: DrilldownColumn[]; rows: Record<string, unknown>[]; total: number; }
+
+const daysBetween = (a: string, b: string) => Math.round((new Date(b).getTime() - new Date(a).getTime()) / DAY);
+const monthKey = (d: string) => d.slice(0, 7);
+
+/** The records behind a KPI: what a user sees when they click the tile */
+export function kpiDrilldown(snapshot: ErpSnapshot, type: KpiType, now: Date = new Date(), limit = 100): Drilldown {
+  const { current } = windows(now);
+  const today = now.toISOString().slice(0, 10);
+  const finish = (title: string, note: string, columns: DrilldownColumn[], rows: Record<string, unknown>[]): Drilldown =>
+    ({ title, note, columns, rows: rows.slice(0, limit), total: rows.length });
+
+  switch (type) {
+    case "revenue": {
+      const rows = snapshot.invoices.filter(i => inWindow(i.date, current))
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .map(i => ({ invoice: i.id, date: i.date, customer: i.customer ?? "Unknown", kind: i.isCreditMemo ? "Credit memo" : "Invoice", amount: i.isCreditMemo ? -i.amount : i.amount, balance: i.balance }));
+      return finish("Invoices in the last 30 days", "Revenue = invoices minus credit memos, by invoice date.",
+        [{ key: "invoice", label: "Invoice" }, { key: "date", label: "Date", kind: "date" }, { key: "customer", label: "Customer" }, { key: "kind", label: "Type" }, { key: "amount", label: "Amount", kind: "money" }, { key: "balance", label: "Open balance", kind: "money" }], rows);
+    }
+    case "orders": {
+      const rows = snapshot.salesOrders.filter(o => o.status === "open")
+        .sort((a, b) => (a.requestedDate ?? "9999").localeCompare(b.requestedDate ?? "9999"))
+        .map(o => ({ order: o.id, orderDate: o.orderDate, customer: o.customer ?? "Unknown", amount: o.amount, requestedDate: o.requestedDate, daysToRequested: o.requestedDate ? daysBetween(today, o.requestedDate) : null }));
+      return finish("Open sales orders", "Orders not yet fully shipped, soonest requested date first. Negative days = already late.",
+        [{ key: "order", label: "Order" }, { key: "orderDate", label: "Ordered", kind: "date" }, { key: "customer", label: "Customer" }, { key: "amount", label: "Amount", kind: "money" }, { key: "requestedDate", label: "Requested", kind: "date" }, { key: "daysToRequested", label: "Days left", kind: "days" }], rows);
+    }
+    case "on_time_delivery": {
+      const rows = snapshot.deliveries.filter(d => d.shippedDate && d.dueDate && inWindow(d.shippedDate, current))
+        .map(d => ({ order: d.orderId, line: d.line, dueDate: d.dueDate, shippedDate: d.shippedDate, daysLate: Math.max(0, daysBetween(d.dueDate!, d.shippedDate!)), qtyShipped: d.qtyShipped, status: daysBetween(d.dueDate!, d.shippedDate!) > 0 ? "Late" : "On time" }))
+        .sort((a, b) => b.daysLate - a.daysLate || b.shippedDate!.localeCompare(a.shippedDate!));
+      return finish("Shipments in the last 30 days", "A shipment is on time when it ships on or before the line's promised date. Late ones are listed first.",
+        [{ key: "order", label: "Order" }, { key: "line", label: "Line" }, { key: "dueDate", label: "Promised", kind: "date" }, { key: "shippedDate", label: "Shipped", kind: "date" }, { key: "daysLate", label: "Days late", kind: "days" }, { key: "qtyShipped", label: "Qty", kind: "number" }, { key: "status", label: "Status" }], rows);
+    }
+    case "inventory": {
+      const rows = snapshot.deliveries.filter(d => d.shippedDate && d.qtyOrdered != null && d.qtyOrdered > 0 && d.qtyShipped != null && inWindow(d.shippedDate, current))
+        .map(d => ({ order: d.orderId, line: d.line, shippedDate: d.shippedDate, qtyOrdered: d.qtyOrdered, qtyShipped: d.qtyShipped, shortBy: Math.max(0, d.qtyOrdered! - d.qtyShipped!), status: d.qtyShipped! >= d.qtyOrdered! ? "Complete" : "Short" }))
+        .sort((a, b) => b.shortBy - a.shortBy || b.shippedDate!.localeCompare(a.shippedDate!));
+      return finish("Order lines shipped in the last 30 days", "Fill rate = lines shipped complete / lines shipped. Short shipments are listed first.",
+        [{ key: "order", label: "Order" }, { key: "line", label: "Line" }, { key: "shippedDate", label: "Shipped", kind: "date" }, { key: "qtyOrdered", label: "Ordered", kind: "number" }, { key: "qtyShipped", label: "Shipped", kind: "number" }, { key: "shortBy", label: "Short by", kind: "number" }, { key: "status", label: "Status" }], rows);
+    }
+    case "cycle_time": {
+      const rows = snapshot.jobs.filter(j => j.completedDate && j.startDate && inWindow(j.completedDate, current))
+        .map(j => ({ job: j.id, startDate: j.startDate, completedDate: j.completedDate, days: daysBetween(j.startDate!, j.completedDate!), dueDate: j.dueDate, qty: j.qty, status: j.dueDate && daysBetween(j.dueDate, j.completedDate!) > 0 ? "Late" : "On time" }))
+        .sort((a, b) => b.days - a.days);
+      return finish("Jobs completed in the last 30 days", "Cycle time = job start to completion, longest first.",
+        [{ key: "job", label: "Job" }, { key: "startDate", label: "Started", kind: "date" }, { key: "completedDate", label: "Completed", kind: "date" }, { key: "days", label: "Days", kind: "days" }, { key: "dueDate", label: "Due", kind: "date" }, { key: "qty", label: "Qty", kind: "number" }, { key: "status", label: "Status" }], rows);
+    }
+    case "performance": {
+      const rows = snapshot.jobs.filter(j => j.completedDate && j.dueDate && inWindow(j.completedDate, current))
+        .map(j => ({ job: j.id, dueDate: j.dueDate, completedDate: j.completedDate, daysLate: Math.max(0, daysBetween(j.dueDate!, j.completedDate!)), qty: j.qty, status: daysBetween(j.dueDate!, j.completedDate!) > 0 ? "Late" : "On time" }))
+        .sort((a, b) => b.daysLate - a.daysLate);
+      return finish("Jobs completed in the last 30 days", "Performance = jobs finished by their due date / jobs finished. Late ones first.",
+        [{ key: "job", label: "Job" }, { key: "dueDate", label: "Due", kind: "date" }, { key: "completedDate", label: "Completed", kind: "date" }, { key: "daysLate", label: "Days late", kind: "days" }, { key: "qty", label: "Qty", kind: "number" }, { key: "status", label: "Status" }], rows);
+    }
+    case "gross_margin":
+    case "cost_per_unit": {
+      const byMonth = new Map<string, { revenue: number; cost: number; units: number }>();
+      for (const m of snapshot.margin) {
+        const k = monthKey(m.date);
+        const b = byMonth.get(k) ?? { revenue: 0, cost: 0, units: 0 };
+        b.revenue += m.revenue; b.cost += m.cost; b.units += m.units; byMonth.set(k, b);
+      }
+      const rows = Array.from(byMonth.entries()).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 12)
+        .map(([month, b]) => ({ month, revenue: round(b.revenue, 2), cost: round(b.cost, 2), margin: b.revenue > 0 ? round(((b.revenue - b.cost) / b.revenue) * 100) : null, units: b.units, costPerUnit: b.units > 0 ? round(b.cost / b.units, 2) : null }));
+      return finish("Margin by month", "From shipped lines: revenue, cost of goods, gross margin % and cost per unit. Newest month first (current month is partial).",
+        [{ key: "month", label: "Month" }, { key: "revenue", label: "Revenue", kind: "money" }, { key: "cost", label: "Cost", kind: "money" }, { key: "margin", label: "Gross margin", kind: "percent" }, { key: "units", label: "Units", kind: "number" }, { key: "costPerUnit", label: "Cost / unit", kind: "money" }], rows);
+    }
+    case "working_capital_efficiency": {
+      const byCustomer = new Map<string, { open: number; count: number; oldestDue: string | null; maxOverdue: number }>();
+      for (const i of snapshot.invoices) {
+        if (i.isCreditMemo || i.balance <= 0) continue;
+        const k = i.customer ?? "Unknown";
+        const b = byCustomer.get(k) ?? { open: 0, count: 0, oldestDue: null, maxOverdue: 0 };
+        b.open += i.balance; b.count++;
+        const due = i.dueDate ?? i.date;
+        if (!b.oldestDue || due < b.oldestDue) b.oldestDue = due;
+        b.maxOverdue = Math.max(b.maxOverdue, daysBetween(due, today));
+        byCustomer.set(k, b);
+      }
+      const rows = Array.from(byCustomer.entries()).sort((a, b) => b[1].open - a[1].open)
+        .map(([customer, b]) => ({ customer, openBalance: round(b.open, 2), invoices: b.count, oldestDue: b.oldestDue, maxDaysOverdue: Math.max(0, b.maxOverdue) }));
+      return finish("Open receivables by customer", "Working capital efficiency = 30-day revenue / open receivables. Largest balances first.",
+        [{ key: "customer", label: "Customer" }, { key: "openBalance", label: "Open balance", kind: "money" }, { key: "invoices", label: "Invoices", kind: "number" }, { key: "oldestDue", label: "Oldest due", kind: "date" }, { key: "maxDaysOverdue", label: "Max days overdue", kind: "days" }], rows);
+    }
+    case "efficiency": {
+      const rows = snapshot.salesOrders.filter(o => o.status === "open" && o.requestedDate)
+        .map(o => ({ order: o.id, customer: o.customer ?? "Unknown", orderDate: o.orderDate, requestedDate: o.requestedDate, daysLate: Math.max(0, daysBetween(o.requestedDate!, today)), amount: o.amount, status: daysBetween(o.requestedDate!, today) > 0 ? "Past due" : "On track" }))
+        .sort((a, b) => b.daysLate - a.daysLate);
+      return finish("Open orders vs requested date", "Efficiency = open orders not yet past their requested date / open orders. Past-due orders first.",
+        [{ key: "order", label: "Order" }, { key: "customer", label: "Customer" }, { key: "orderDate", label: "Ordered", kind: "date" }, { key: "requestedDate", label: "Requested", kind: "date" }, { key: "daysLate", label: "Days past due", kind: "days" }, { key: "amount", label: "Amount", kind: "money" }, { key: "status", label: "Status" }], rows);
+    }
+    default:
+      return finish("No detail available", "", [], []);
+  }
+}
+
 // ---- analytics overview numbers -----------------------------------------------------------
 
 export function businessMetrics(snapshot: ErpSnapshot, now: Date = new Date()) {
