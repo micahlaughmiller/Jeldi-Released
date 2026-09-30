@@ -26,6 +26,13 @@ API, a report export, or only screens.
 | Inventory | e.g. ERP, spreadsheet, none | |
 | Shipping | e.g. ShipStation, carrier portals, within ERP | |
 | Email | Microsoft 365, Google Workspace, other | |
+| Collaboration | Microsoft Teams, SharePoint, OneDrive, Slack | |
+| Engineering / product | GitHub, GitLab, Jira | |
+
+Everything in the "Integrations" column of [INTEGRATIONS.md](INTEGRATIONS.md) can be connected as a
+data source straight away (GitHub, GitLab, Microsoft 365 Teams + SharePoint, QuickBooks Online).
+For each one, collect who can create the token or approve the OAuth consent, and which
+repositories / teams / sites are in scope.
 
 ## 3. Mapping decisions (made together in the setup session)
 

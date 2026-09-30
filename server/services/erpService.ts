@@ -1,4 +1,5 @@
 import { storage } from "../storage";
+import { summarizeSourcesForAi } from "../sources/sourceSync";
 import type { ErpConnection } from "@shared/schema";
 import crypto from "crypto";
 import { isDemoEnvironment } from "./demo-data";
@@ -335,10 +336,10 @@ export class ERPService {
 
     // If user has connected systems, fetch real data
     if (connectedSystems.length > 0) {
-      const snapshots = connectedSystems.some(c => hasConnector(c.erpSystem)) ? await storage.getLatestErpSnapshots(organizationId) : [];
+      const snapshots = connectedSystems.some(c => hasConnector(c.erpSystem) || c.connectionType === "source") ? await storage.getLatestErpSnapshots(organizationId) : [];
       for (const connection of connectedSystems) {
         // Connector-backed systems (Epicor, SyteLine, demo) are summarised from the synced snapshot
-        if (hasConnector(connection.erpSystem)) {
+        if (hasConnector(connection.erpSystem) || connection.connectionType === "source") {
           const row = snapshots.find(sn => sn.connectionId === connection.id);
           aggregatedData[connection.erpSystem] = row
             ? summarizeSnapshot(row.snapshot as ErpSnapshot)
@@ -356,6 +357,13 @@ export class ERPService {
       }
     }
 
+    // Everything pulled from the company's other tools (GitHub, Teams, QuickBooks ...)
+    try {
+      const tools = await summarizeSourcesForAi(organizationId);
+      if (tools) aggregatedData.connectedTools = tools;
+    } catch (error) {
+      console.error("Source digest failed:", (error as Error).message);
+    }
     return aggregatedData;
   }
 

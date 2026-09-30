@@ -7,8 +7,9 @@ import pg from 'pg';
 import ws from "ws";
 import * as coreSchema from "@shared/schema";
 import * as ledgerSchema from "@shared/ledger-schema";
+import * as sourcesSchema from "@shared/sources-schema";
 
-const schema = { ...coreSchema, ...ledgerSchema };
+const schema = { ...coreSchema, ...ledgerSchema, ...sourcesSchema };
 
 const url = process.env.DATABASE_URL;
 if (!url) {

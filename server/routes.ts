@@ -9,6 +9,7 @@ import { syncOrganization, syncConnection, latestSnapshotForOrg, writeKpiValues 
 import { resolveOrganizationForUser, createPersonalOrganization, acceptInvitation, createInvitation, setOrgMemberRole, orgMemberRoleName, getOrgAiConfig, setOrgAiConfig, orgAiKeyHint, ORG_MEMBER_ROLES, type OrgMemberRole, type AiProvider } from "./services/orgService";
 import { testAiConfig, describeAiError, AiNotConfiguredError } from "./services/aiService";
 import { registerLedgerRoutes } from "./ledger/ledgerRoutes";
+import { registerSourceRoutes } from "./sources/sourceRoutes";
 import { revenue90d, unpaidInvoices, refunds30d, cancellations30d, monthlyRevenue, businessMetrics as liveBusinessMetrics, computeKpis, kpiTrend, kpiDrilldown, KPI_TYPES, type KpiType } from "./services/kpiEngine";
 import { sql } from "drizzle-orm";
 import { erpService } from "./services/erpService";
@@ -1026,7 +1027,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/erp/sync-status", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
-      const connections = (await storage.getErpConnections(req.organizationId)).filter(c => hasConnector(c.erpSystem));
+      const connections = (await storage.getErpConnections(req.organizationId)).filter(c => hasConnector(c.erpSystem) || c.connectionType === "source");
       const snapshot = await latestSnapshotForOrg(req.organizationId);
       res.json({
         connections: connections.map(c => ({
@@ -4311,6 +4312,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   // Built-in ledger (organizations that use Jeldi as their system of record)
   registerLedgerRoutes(app, { authenticateToken, requirePermission });
+  // Integration hub: GitHub, GitLab, Microsoft 365, QuickBooks ... into one store
+  registerSourceRoutes(app, { authenticateToken, requirePermission });
 
   const httpServer = createServer(app);
 

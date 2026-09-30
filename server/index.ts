@@ -5,6 +5,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { enforceEnvironmentValidation } from "./env-validation";
 import { initializeAllDemoData } from "./services/demo-data";
 import { startSyncScheduler } from "./services/syncService";
+import { startSourceSyncScheduler } from "./sources/sourceSync";
 import { ensureOrganizationsForAllUsers } from "./services/orgService";
 
 // Enforce environment validation before starting application
@@ -73,6 +74,7 @@ app.use((req, res, next) => {
 
   // Pull ERP data on a schedule (long-running server only; Lambda uses sync-lambda.ts)
   startSyncScheduler();
+  startSourceSyncScheduler();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
