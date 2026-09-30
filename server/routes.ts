@@ -5,7 +5,9 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { isDemoEnvironment } from "./services/demo-data";
 import { hasConnector, buildConnector, splitCredentials } from "./connectors";
-import { syncUser, syncConnection, latestSnapshotForUser } from "./services/syncService";
+import { syncOrganization, syncConnection, latestSnapshotForOrg } from "./services/syncService";
+import { resolveOrganizationForUser, createPersonalOrganization, acceptInvitation, createInvitation, setOrgMemberRole, orgMemberRoleName, getOrgAiConfig, setOrgAiConfig, orgAiKeyHint, ORG_MEMBER_ROLES, type OrgMemberRole, type AiProvider } from "./services/orgService";
+import { testAiConfig, describeAiError, AiNotConfiguredError } from "./services/aiService";
 import { revenue90d, unpaidInvoices, refunds30d, cancellations30d, monthlyRevenue, businessMetrics as liveBusinessMetrics, computeKpis, kpiTrend, kpiDrilldown, KPI_TYPES, type KpiType } from "./services/kpiEngine";
 import { sql } from "drizzle-orm";
 import { erpService } from "./services/erpService";
@@ -20,14 +22,14 @@ import jwt from "jsonwebtoken";
 import passport from "passport";
 import { OAuthService } from "./services/oauthService";
 import { getJwtSecret, detectEnvironment, getAllowedOrigins, validateDomainSecurity } from "./env-validation";
-import { RBACService, AuthenticatedRequest, loadUserPermissions, requirePermission, requireRole, requireAdmin, authWithPermissions } from "./services/rbac";
+import { RBACService, AuthenticatedRequest, loadUserPermissions, requirePermission, requireRole, requireAdmin, requireOrgAdmin, authWithPermissions } from "./services/rbac";
 import { auditService } from "./services/auditService";
 import { sessionService } from "./services/sessionService";
 import { passwordPolicyService } from "./services/passwordPolicyService";
 
 // Type helper to convert AuthenticatedRequest handlers to standard RequestHandler
-// authenticateToken always runs before these handlers, so req.user is present
-type AuthedRequest = AuthenticatedRequest & { user: AuthUser };
+// authenticateToken always runs before these handlers, so req.user and the organization are present
+type AuthedRequest = AuthenticatedRequest & { user: AuthUser; organizationId: string; orgRole: "owner" | "admin" | "member" };
 const asAuth = (h: (req: AuthedRequest, res: Response, next: NextFunction) => any): RequestHandler => 
   (req, res, next) => h(req as AuthedRequest, res, next);
 
@@ -38,17 +40,19 @@ const getJwtSecretAtRuntime = () => getJwtSecret();
 interface WSClient {
   ws: WebSocket;
   user: AuthUser;
+  organizationId: string;
   permissions: string[];
 }
 const wsClients = new Map<string, WSClient[]>(); // a user may have several tabs open
 
 // Helper function to broadcast ERP status updates with permission check
-async function broadcastERPStatusUpdate(userId: string) {
-  const clients = (wsClients.get(userId) || []).filter(c => c.ws.readyState === WebSocket.OPEN && c.permissions.includes('erp_connections.read'));
+async function broadcastERPStatusUpdate(organizationId: string) {
+  const clients = Array.from(wsClients.values()).flat()
+    .filter(c => c.organizationId === organizationId && c.ws.readyState === WebSocket.OPEN && c.permissions.includes('erp_connections.read'));
   if (clients.length === 0) return;
   {
     try {
-      const systems = await erpService.getConnectedSystems(userId);
+      const systems = await erpService.getConnectedSystems(organizationId);
       const payload = JSON.stringify({
         type: 'erp_status_update',
         data: systems.map(system => ({
@@ -172,6 +176,12 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         role: user.role,
         authProvider: user.authProvider
       };
+
+      // Every request acts inside one organization (header can pick among the user's memberships)
+      const requestedOrg = typeof req.headers['x-organization-id'] === 'string' ? req.headers['x-organization-id'] : undefined;
+      const ctx = await resolveOrganizationForUser(user.id, requestedOrg);
+      req.organizationId = ctx.organization.id;
+      req.orgRole = ctx.orgRole;
       next();
     } catch (error) {
       return res.status(403).json({ message: 'Invalid token' });
@@ -235,6 +245,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
       // Record password in history
       await passwordPolicyService.recordPasswordChange(user.id, hashedPassword);
+
+      // Every account lives in an organization: join the one that invited them, or get a personal one
+      const inviteToken = typeof req.body.inviteToken === "string" ? req.body.inviteToken : null;
+      const joinedOrgId = inviteToken ? await acceptInvitation(inviteToken, user) : null;
+      if (!joinedOrgId) {
+        const orgName = typeof req.body.organizationName === "string" && req.body.organizationName.trim() ? req.body.organizationName.trim() : undefined;
+        await createPersonalOrganization(user, orgName);
+      }
 
       // Assign RBAC role
       try {
@@ -786,7 +804,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // ERP Connection routes
   app.get("/api/erp/systems", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
-      const systems = await erpService.getConnectedSystems(req.user.id);
+      const systems = await erpService.getConnectedSystems(req.organizationId);
       res.json(systems);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch ERP systems", error: (error as Error).message });
@@ -801,7 +819,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/erp/connections", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
-      const connections = await storage.getErpConnections(req.user.id);
+      const connections = await storage.getErpConnections(req.organizationId);
       res.json(connections.map(sanitizeErpConnection));
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch ERP connections", error: (error as Error).message });
@@ -810,7 +828,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/erp/connections/:id", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
-      const connections = await storage.getErpConnections(req.user.id);
+      const connections = await storage.getErpConnections(req.organizationId);
       const connection = connections.find(c => c.id === req.params.id);
       if (!connection) {
         return res.status(404).json({ message: "ERP connection not found" });
@@ -826,7 +844,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const { system } = req.params;
       const redirectUri = process.env.OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/erp/callback`;
       
-      const authUrl = await erpService.initiateOAuthFlow(system, req.user.id, redirectUri);
+      const authUrl = await erpService.initiateOAuthFlow(system, { userId: req.user.id, organizationId: req.organizationId }, redirectUri);
       res.json({ authUrl });
     } catch (error) {
       res.status(400).json({ message: "Failed to initiate OAuth", error: (error as Error).message });
@@ -844,7 +862,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const connection = await erpService.handleOAuthCallback(code as string, state as string);
       
       // Broadcast ERP status update via WebSocket
-      await broadcastERPStatusUpdate(connection.userId);
+      await broadcastERPStatusUpdate(connection.organizationId ?? connection.userId);
       
       // Redirect to dashboard with success message
       res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5000'}/dashboard?connected=${connection.erpSystem}`);
@@ -856,10 +874,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.delete("/api/erp/disconnect/:system", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
     try {
       const { system } = req.params;
-      await erpService.disconnectSystem(req.user.id, system);
+      await erpService.disconnectSystem(req.organizationId, system);
       
       // Broadcast ERP status update via WebSocket
-      await broadcastERPStatusUpdate(req.user.id);
+      await broadcastERPStatusUpdate(req.organizationId);
       
       res.json({ message: "System disconnected successfully" });
     } catch (error) {
@@ -869,7 +887,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/erp/data", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
-      const data = await erpService.aggregateERPData(req.user.id);
+      const data = await erpService.aggregateERPData(req.organizationId);
       res.json(data);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch ERP data", error: (error as Error).message });
@@ -903,7 +921,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.put("/api/erp/config/:id", authenticateToken, requirePermission("erp_connections", "manage"), asAuth(async (req, res) => {
     try {
       const { id } = req.params;
-      const owned = (await storage.getErpConnections(req.user.id)).find(c => c.id === id);
+      const owned = (await storage.getErpConnections(req.organizationId)).find(c => c.id === id);
       if (!owned) {
         return res.status(404).json({ message: "Connection not found" });
       }
@@ -921,7 +939,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         return res.status(404).json({ message: "Connection not found" });
       }
       
-      await broadcastERPStatusUpdate(req.user.id);
+      await broadcastERPStatusUpdate(req.organizationId);
       
       res.json(updatedConnection);
     } catch (error) {
@@ -977,18 +995,18 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         isConnected: true,
         metadata: { lastSyncError: null },
       };
-      const existing = await storage.getErpConnection(req.user.id, erpSystem);
+      const existing = await storage.getErpConnection(req.organizationId, erpSystem);
       const connection = existing
         ? await storage.updateErpConnection(existing.id, values)
-        : await storage.createErpConnection({ userId: req.user.id, erpSystem, ...values });
+        : await storage.createErpConnection({ userId: req.user.id, organizationId: req.organizationId, erpSystem, ...values });
       if (!connection) {
         return res.status(500).json({ message: "Failed to store connection" });
       }
       // First sync runs in the background so the wizard returns promptly
       syncConnection(connection)
-        .then(() => broadcastERPStatusUpdate(req.user.id))
+        .then(() => broadcastERPStatusUpdate(req.organizationId))
         .catch(err => console.error("Initial ERP sync failed:", err));
-      await broadcastERPStatusUpdate(req.user.id);
+      await broadcastERPStatusUpdate(req.organizationId);
       res.json({ ...sanitizeErpConnection(connection), message: test.message, syncStarted: true });
     } catch (error) {
       res.status(400).json({ message: "Failed to connect ERP", error: (error as Error).message });
@@ -997,8 +1015,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.post("/api/erp/sync", authenticateToken, requirePermission("erp_connections", "sync"), asAuth(async (req, res) => {
     try {
-      const results = await syncUser(req.user.id);
-      await broadcastERPStatusUpdate(req.user.id);
+      const results = await syncOrganization(req.organizationId);
+      await broadcastERPStatusUpdate(req.organizationId);
       res.json({ results });
     } catch (error) {
       res.status(500).json({ message: "Sync failed", error: (error as Error).message });
@@ -1007,8 +1025,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/erp/sync-status", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
-      const connections = (await storage.getErpConnections(req.user.id)).filter(c => hasConnector(c.erpSystem));
-      const snapshot = await latestSnapshotForUser(req.user.id);
+      const connections = (await storage.getErpConnections(req.organizationId)).filter(c => hasConnector(c.erpSystem));
+      const snapshot = await latestSnapshotForOrg(req.organizationId);
       res.json({
         connections: connections.map(c => ({
           id: c.id,
@@ -1037,14 +1055,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const { erpSystem, apiKey, apiSecret, instanceUrl } = req.body;
       
       const connection = await erpService.connectWithApiKey(
-        req.user.id,
+        { userId: req.user.id, organizationId: req.organizationId },
         erpSystem,
         apiKey,
         apiSecret,
         instanceUrl
       );
       
-      await broadcastERPStatusUpdate(req.user.id);
+      await broadcastERPStatusUpdate(req.organizationId);
       
       res.json(connection);
     } catch (error) {
@@ -1057,7 +1075,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const { customName, apiBaseUrl, authMethod, credentials, metadata } = req.body;
       
       const connection = await erpService.connectCustomERP(
-        req.user.id,
+        { userId: req.user.id, organizationId: req.organizationId },
         customName,
         apiBaseUrl,
         authMethod,
@@ -1065,7 +1083,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         metadata
       );
       
-      await broadcastERPStatusUpdate(req.user.id);
+      await broadcastERPStatusUpdate(req.organizationId);
       
       res.json(connection);
     } catch (error) {
@@ -1313,6 +1331,202 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // ===== ORGANIZATION MANAGEMENT API ROUTES =====
 
   // Get user's organizations
+  // ---- Current organization (the tenant this session acts on) ----
+  const currentOrgPayload = async (req: AuthedRequest) => {
+    const organization = await storage.getOrganization(req.organizationId);
+    if (!organization) throw new Error("Organization not found");
+    const ai = await getOrgAiConfig(req.organizationId);
+    const { aiApiKey, ...safeOrg } = organization;
+    return {
+      organization: safeOrg,
+      orgRole: req.orgRole,
+      memberRole: await orgMemberRoleName(req.user.id, req.organizationId),
+      aiKeyHint: await orgAiKeyHint(req.organizationId),
+      aiSource: ai.provider !== "none" && ai.apiKey ? "organization" : (isDemoEnvironment() && (process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY) ? "platform" : "none"),
+      canManage: req.orgRole === "owner" || req.orgRole === "admin" || req.user.role === "admin",
+    };
+  };
+
+  app.get("/api/organizations/current", authenticateToken, asAuth(async (req, res) => {
+    try {
+      res.json(await currentOrgPayload(req));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load organization", error: (error as Error).message });
+    }
+  }));
+
+  app.put("/api/organizations/current", authenticateToken, requireOrgAdmin, asAuth(async (req, res) => {
+    try {
+      const { displayName, website, logo, branding } = req.body ?? {};
+      const existing = await storage.getOrganization(req.organizationId);
+      const settings = { ...((existing?.settings as Record<string, unknown>) ?? {}) };
+      if (branding && typeof branding === "object") settings.branding = { ...((settings.branding as Record<string, unknown>) ?? {}), ...branding };
+      const updates: Record<string, unknown> = { settings };
+      if (typeof displayName === "string" && displayName.trim()) updates.displayName = displayName.trim().slice(0, 120);
+      if (website !== undefined) updates.website = website ? String(website).slice(0, 300) : null;
+      if (logo !== undefined) updates.logo = logo ? String(logo).slice(0, 500) : null;
+      await storage.updateOrganization(req.organizationId, updates as any);
+      res.json(await currentOrgPayload(req));
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update organization", error: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/organizations/mine", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const orgs = await storage.getUserOrganizations(req.user.id);
+      res.json(orgs.map(o => ({ id: o.id, name: o.name, displayName: o.displayName, memberCount: o.memberCount, isCurrent: o.id === req.organizationId })));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to list organizations", error: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/organizations/:id/switch", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const member = await storage.getOrganizationMember(req.params.id, req.user.id);
+      if (!member || member.status !== "active") return res.status(403).json({ message: "You are not a member of that organization" });
+      await storage.updateUser(req.user.id, { defaultOrganizationId: req.params.id });
+      res.json({ organizationId: req.params.id });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to switch organization", error: (error as Error).message });
+    }
+  }));
+
+  // AI provider: each organization brings its own key
+  app.put("/api/organizations/current/ai", authenticateToken, requireOrgAdmin, asAuth(async (req, res) => {
+    try {
+      const provider = String(req.body?.provider ?? "none") as AiProvider;
+      if (!["none", "openai", "anthropic"].includes(provider)) return res.status(400).json({ message: "provider must be none, openai or anthropic" });
+      const apiKey = typeof req.body?.apiKey === "string" && req.body.apiKey.trim() ? req.body.apiKey.trim() : undefined;
+      const model = typeof req.body?.model === "string" && req.body.model.trim() ? req.body.model.trim() : null;
+      const current = await getOrgAiConfig(req.organizationId);
+      if (provider !== "none" && !apiKey && !(current.provider === provider && current.apiKey)) {
+        return res.status(400).json({ message: "An API key is required for this provider" });
+      }
+      await setOrgAiConfig(req.organizationId, { provider, apiKey, model });
+      await RBACService.logAuditEvent({ userId: req.user.id, action: "organization_ai_updated", resource: "organizations", resourceId: req.organizationId, oldValue: { provider: current.provider }, newValue: { provider, model, keyChanged: Boolean(apiKey) }, ipAddress: req.ip, userAgent: req.get("User-Agent") || null });
+      res.json(await currentOrgPayload(req));
+    } catch (error) {
+      res.status(400).json({ message: "Failed to save AI settings", error: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/organizations/current/ai/test", authenticateToken, requireOrgAdmin, asAuth(async (req, res) => {
+    try {
+      const provider = String(req.body?.provider ?? "none") as AiProvider;
+      const current = await getOrgAiConfig(req.organizationId);
+      const apiKey = (typeof req.body?.apiKey === "string" && req.body.apiKey.trim()) || (current.provider === provider ? current.apiKey : null);
+      if (provider === "none" || !apiKey) return res.status(400).json({ message: "Choose a provider and enter an API key" });
+      const model = typeof req.body?.model === "string" && req.body.model.trim() ? req.body.model.trim() : current.model;
+      res.json(await testAiConfig({ provider, apiKey, model }));
+    } catch (error) {
+      const { status, body } = describeAiError(error);
+      res.status(status).json(body);
+    }
+  }));
+
+  // Members and roles inside the current organization
+  app.get("/api/organizations/current/members", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const members = await storage.getOrganizationMembers(req.organizationId);
+      res.json(await Promise.all(members.filter(m => m.status === "active").map(async m => ({
+        userId: m.userId,
+        username: m.user.username,
+        email: m.user.email,
+        isOwner: m.isOwner,
+        roleName: await orgMemberRoleName(m.userId, req.organizationId),
+        joinedAt: m.joinedAt,
+      }))));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to list members", error: (error as Error).message });
+    }
+  }));
+
+  app.put("/api/organizations/current/members/:userId", authenticateToken, requireOrgAdmin, asAuth(async (req, res) => {
+    try {
+      const roleName = String(req.body?.roleName ?? "");
+      if (!(ORG_MEMBER_ROLES as readonly string[]).includes(roleName)) return res.status(400).json({ message: `roleName must be one of ${ORG_MEMBER_ROLES.join(", ")}` });
+      const member = await storage.getOrganizationMember(req.organizationId, req.params.userId);
+      if (!member) return res.status(404).json({ message: "Not a member of this organization" });
+      if (member.isOwner) return res.status(400).json({ message: "The owner's role cannot be changed" });
+      await setOrgMemberRole(req.params.userId, req.organizationId, roleName as OrgMemberRole, req.user.id);
+      res.json({ userId: req.params.userId, roleName });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to change role", error: (error as Error).message });
+    }
+  }));
+
+  app.delete("/api/organizations/current/members/:userId", authenticateToken, requireOrgAdmin, asAuth(async (req, res) => {
+    try {
+      const member = await storage.getOrganizationMember(req.organizationId, req.params.userId);
+      if (!member) return res.status(404).json({ message: "Not a member of this organization" });
+      if (member.isOwner) return res.status(400).json({ message: "The owner cannot be removed" });
+      await storage.removeOrganizationMember(req.organizationId, req.params.userId);
+      const target = await storage.getUser(req.params.userId);
+      if (target?.defaultOrganizationId === req.organizationId) await storage.updateUser(target.id, { defaultOrganizationId: null });
+      res.json({ removed: req.params.userId });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to remove member", error: (error as Error).message });
+    }
+  }));
+
+  // Invitations
+  const inviteLink = (req: AuthedRequest, token: string) => `${process.env.FRONTEND_URL || `${req.protocol}://${req.get("host")}`}/login?invite=${encodeURIComponent(token)}`;
+
+  app.get("/api/organizations/current/invitations", authenticateToken, requireOrgAdmin, asAuth(async (req, res) => {
+    try {
+      const rows = await storage.getOrganizationInvitations(req.organizationId);
+      res.json(rows.map(i => ({ ...i, link: inviteLink(req, i.token) })));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to list invitations", error: (error as Error).message });
+    }
+  }));
+
+  app.post("/api/organizations/current/invitations", authenticateToken, requireOrgAdmin, asAuth(async (req, res) => {
+    try {
+      const email = String(req.body?.email ?? "").trim().toLowerCase();
+      const roleName = String(req.body?.roleName ?? "user");
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ message: "A valid email address is required" });
+      if (!(ORG_MEMBER_ROLES as readonly string[]).includes(roleName)) return res.status(400).json({ message: "Unknown role" });
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser && await storage.getOrganizationMember(req.organizationId, existingUser.id)) {
+        return res.status(409).json({ message: "That person is already a member" });
+      }
+      const inv = await createInvitation(req.organizationId, email, roleName as OrgMemberRole, req.user.id);
+      res.status(201).json({ ...inv, link: inviteLink(req, inv.token) });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to create invitation", error: (error as Error).message });
+    }
+  }));
+
+  app.delete("/api/organizations/current/invitations/:id", authenticateToken, requireOrgAdmin, asAuth(async (req, res) => {
+    try {
+      const ok = await storage.deleteOrganizationInvitation(req.params.id, req.organizationId);
+      res.status(ok ? 200 : 404).json({ deleted: ok });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to revoke invitation", error: (error as Error).message });
+    }
+  }));
+
+  // Public: what an invitation is for (shown on the registration page)
+  app.get("/api/invitations/:token", async (req, res) => {
+    const inv = await storage.getOrganizationInvitationByToken(req.params.token);
+    if (!inv || inv.acceptedAt || inv.expiresAt.getTime() < Date.now()) return res.status(404).json({ message: "This invitation is no longer valid" });
+    const org = await storage.getOrganization(inv.organizationId);
+    res.json({ email: inv.email, roleName: inv.roleName, organization: org ? { id: org.id, displayName: org.displayName, logo: org.logo } : null, expiresAt: inv.expiresAt });
+  });
+
+  // An existing, signed-in user accepts an invitation
+  app.post("/api/invitations/:token/accept", authenticateToken, asAuth(async (req, res) => {
+    try {
+      const orgId = await acceptInvitation(req.params.token, req.user);
+      if (!orgId) return res.status(400).json({ message: "This invitation is not valid for your account (wrong email, expired or already used)" });
+      res.json({ organizationId: orgId });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to accept invitation", error: (error as Error).message });
+    }
+  }));
+
   app.get("/api/organizations/my", authenticateToken, asAuth(async (req, res) => {
     try {
       const organizations = await storage.getUserOrganizations(req.user!.id);
@@ -2236,7 +2450,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // KPI routes
   app.get("/api/kpis", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
     try {
-      const kpis = await storage.getKpiConfigurations(req.user.id);
+      const kpis = await storage.getKpiConfigurations(req.organizationId);
       const kpisWithData = await Promise.all(
         kpis.map(async (kpi) => {
           const latestData = await storage.getLatestKpiData(kpi.id);
@@ -2253,7 +2467,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     try {
       const kpiData = insertKpiConfigurationSchema.parse({
         ...req.body,
-        userId: req.user.id
+        userId: req.user.id,
+        organizationId: req.organizationId
       });
       
       const kpi = await storage.createKpiConfiguration(kpiData);
@@ -2270,13 +2485,13 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       if (!(KPI_TYPES as readonly string[]).includes(type)) {
         return res.status(404).json({ available: false, message: `Unknown KPI type: ${req.params.type}` });
       }
-      const snapshot = await latestSnapshotForUser(req.user.id);
+      const snapshot = await latestSnapshotForOrg(req.organizationId);
       if (!snapshot) {
         return res.json({ available: false, message: "No ERP data has been synced yet. Connect an ERP and run a sync." });
       }
       const now = new Date();
       const kpi = computeKpis(snapshot, now)[type];
-      const config = (await storage.getKpiConfigurations(req.user.id)).find(k => k.type === type);
+      const config = (await storage.getKpiConfigurations(req.organizationId)).find(k => k.type === type);
       const history = config ? (await storage.getKpiDataHistory(config.id, 60)).map(h => ({ timestamp: h.timestamp, value: h.value, change: h.change })) : [];
       res.json({
         available: true,
@@ -2330,28 +2545,28 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       // If no preferences exist, auto-create universal defaults (COO/CFO focused)
       if (preferences.length === 0) {
         // First ensure KPI configurations exist - create them if they don't
-        let allKpis = await storage.getKpiConfigurations(req.user.id);
+        let allKpis = await storage.getKpiConfigurations(req.organizationId);
         
         if (allKpis.length === 0) {
           // Create universal KPI configurations
           const universalKpis = [
-            { userId: req.user.id, type: 'cycle_time', name: 'Cycle Time', erpSource: 'universal', query: 'Universal metric: Average time to complete production/service cycle', position: 1, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'on_time_delivery', name: 'On-Time Delivery Rate', erpSource: 'universal', query: 'Universal metric: Percentage of orders/deliveries completed on time', position: 2, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'cost_per_unit', name: 'Cost Per Unit', erpSource: 'universal', query: 'Universal metric: Average cost to produce/deliver each unit', position: 3, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'working_capital_efficiency', name: 'Working Capital Efficiency', erpSource: 'universal', query: 'Universal metric: Ratio of working capital to revenue (CFO focus)', position: 4, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'gross_margin', name: 'Gross Margin', erpSource: 'universal', query: 'Universal metric: Gross profit as percentage of revenue (CFO focus)', position: 5, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'revenue', name: 'Monthly Revenue', erpSource: 'universal', query: 'Universal metric: Total revenue for current period', position: 6, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'orders', name: 'Active Orders', erpSource: 'universal', query: 'Universal metric: Number of active orders being processed (COO focus)', position: 7, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'inventory', name: 'Inventory Fill Rate', erpSource: 'universal', query: 'Universal metric: Percentage of inventory filled/available', position: 8, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'performance', name: 'System Performance', erpSource: 'universal', query: 'Universal metric: Overall system performance score', position: 9, isActive: true, refreshInterval: 30 },
-            { userId: req.user.id, type: 'efficiency', name: 'Operational Efficiency', erpSource: 'universal', query: 'Universal metric: Overall operational efficiency (COO focus)', position: 10, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'cycle_time', name: 'Cycle Time', erpSource: 'universal', query: 'Universal metric: Average time to complete production/service cycle', position: 1, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'on_time_delivery', name: 'On-Time Delivery Rate', erpSource: 'universal', query: 'Universal metric: Percentage of orders/deliveries completed on time', position: 2, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'cost_per_unit', name: 'Cost Per Unit', erpSource: 'universal', query: 'Universal metric: Average cost to produce/deliver each unit', position: 3, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'working_capital_efficiency', name: 'Working Capital Efficiency', erpSource: 'universal', query: 'Universal metric: Ratio of working capital to revenue (CFO focus)', position: 4, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'gross_margin', name: 'Gross Margin', erpSource: 'universal', query: 'Universal metric: Gross profit as percentage of revenue (CFO focus)', position: 5, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'revenue', name: 'Monthly Revenue', erpSource: 'universal', query: 'Universal metric: Total revenue for current period', position: 6, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'orders', name: 'Active Orders', erpSource: 'universal', query: 'Universal metric: Number of active orders being processed (COO focus)', position: 7, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'inventory', name: 'Inventory Fill Rate', erpSource: 'universal', query: 'Universal metric: Percentage of inventory filled/available', position: 8, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'performance', name: 'System Performance', erpSource: 'universal', query: 'Universal metric: Overall system performance score', position: 9, isActive: true, refreshInterval: 30 },
+            { userId: req.user.id, organizationId: req.organizationId, type: 'efficiency', name: 'Operational Efficiency', erpSource: 'universal', query: 'Universal metric: Overall operational efficiency (COO focus)', position: 10, isActive: true, refreshInterval: 30 },
           ];
           
           for (const kpi of universalKpis) {
             await storage.createKpiConfiguration(kpi);
           }
           
-          allKpis = await storage.getKpiConfigurations(req.user.id);
+          allKpis = await storage.getKpiConfigurations(req.organizationId);
         }
         
         // Now create default preferences
@@ -2377,7 +2592,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
       
       // Latest value for every KPI in one query
-      const latest = await storage.getLatestKpiDataForUser(req.user.id);
+      const latest = await storage.getLatestKpiDataForOrg(req.organizationId);
       const preferencesWithData = preferences.map(pref => ({ ...pref, latestData: latest.get(pref.kpiConfig.id) }));
       
       res.json({ preferences: preferencesWithData, defaults: [] });
@@ -2388,7 +2603,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/dashboard/available-kpis", authenticateToken, asAuth(async (req, res) => {
     try {
-      let allKpis = await storage.getKpiConfigurations(req.user.id);
+      let allKpis = await storage.getKpiConfigurations(req.organizationId);
       
       // If no KPI configurations exist, create universal defaults
       if (allKpis.length === 0) {
@@ -2397,6 +2612,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         const universalKpis = [
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'cycle_time', 
             name: 'Cycle Time', 
             erpSource: 'universal',
@@ -2407,6 +2623,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'on_time_delivery', 
             name: 'On-Time Delivery Rate', 
             erpSource: 'universal',
@@ -2417,6 +2634,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'cost_per_unit', 
             name: 'Cost Per Unit', 
             erpSource: 'universal',
@@ -2427,6 +2645,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'working_capital_efficiency', 
             name: 'Working Capital Efficiency', 
             erpSource: 'universal',
@@ -2437,6 +2656,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'gross_margin', 
             name: 'Gross Margin', 
             erpSource: 'universal',
@@ -2447,6 +2667,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'revenue', 
             name: 'Monthly Revenue', 
             erpSource: 'universal',
@@ -2457,6 +2678,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'orders', 
             name: 'Active Orders', 
             erpSource: 'universal',
@@ -2467,6 +2689,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'inventory', 
             name: 'Inventory Fill Rate', 
             erpSource: 'universal',
@@ -2477,6 +2700,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'performance', 
             name: 'System Performance', 
             erpSource: 'universal',
@@ -2487,6 +2711,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           },
           { 
             userId: req.user.id,
+            organizationId: req.organizationId,
             type: 'efficiency', 
             name: 'Operational Efficiency', 
             erpSource: 'universal',
@@ -2504,7 +2729,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         console.log('Created', universalKpis.length, 'universal KPI configurations');
         
         // Fetch the newly created KPIs
-        allKpis = await storage.getKpiConfigurations(req.user.id);
+        allKpis = await storage.getKpiConfigurations(req.organizationId);
       }
       
       // Group KPIs by category
@@ -2531,7 +2756,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
 
       // Every id must belong to the caller
-      const ownedIds = new Set((await storage.getKpiConfigurations(req.user.id)).map(k => k.id));
+      const ownedIds = new Set((await storage.getKpiConfigurations(req.organizationId)).map(k => k.id));
       if (!kpiConfigIds.every((id: unknown) => typeof id === "string" && ownedIds.has(id))) {
         return res.status(400).json({ message: "One or more KPI ids are not valid for this user" });
       }
@@ -2737,21 +2962,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // Chart Data Endpoints
   app.get("/api/charts/revenue-90d", authenticateToken, asAuth(async (req, res) => {
     try {
-      const snapshot = await latestSnapshotForUser(req.user.id);
+      const snapshot = await latestSnapshotForOrg(req.organizationId);
       if (snapshot) return res.json(revenue90d(snapshot));
-      // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
-      if (!isDemoEnvironment()) return res.json([]);
-      // Mock data for revenue over 90 days
-      const data = Array.from({ length: 90 }, (_, i) => {
-        const date = new Date();
-        date.setDate(date.getDate() - (89 - i));
-        return {
-          date: date.toISOString().split('T')[0],
-          revenue: Math.floor(Math.random() * 50000) + 30000,
-          target: 45000,
-        };
-      });
-      res.json(data);
+      // No synced ERP data for this organization yet: empty state, never fabricated numbers
+      res.json([]);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch revenue data", error: (error as Error).message });
     }
@@ -2759,19 +2973,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/unpaid-invoices", authenticateToken, asAuth(async (req, res) => {
     try {
-      const snapshot = await latestSnapshotForUser(req.user.id);
+      const snapshot = await latestSnapshotForOrg(req.organizationId);
       if (snapshot) return res.json(unpaidInvoices(snapshot));
-      // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
-      if (!isDemoEnvironment()) return res.json([]);
-      // Mock data for unpaid invoices
-      const data = [
-        { invoiceId: 'INV-001', customer: 'Acme Corp', amount: 12500, dueDate: '2025-01-15', daysOverdue: 23 },
-        { invoiceId: 'INV-002', customer: 'Global Industries', amount: 8750, dueDate: '2025-01-20', daysOverdue: 18 },
-        { invoiceId: 'INV-003', customer: 'Tech Solutions', amount: 15000, dueDate: '2025-01-25', daysOverdue: 13 },
-        { invoiceId: 'INV-004', customer: 'Retail Plus', amount: 5400, dueDate: '2025-02-01', daysOverdue: 6 },
-        { invoiceId: 'INV-005', customer: 'Manufacturing Co', amount: 22000, dueDate: '2025-02-05', daysOverdue: 2 },
-      ];
-      res.json(data);
+      // No synced ERP data for this organization yet: empty state, never fabricated numbers
+      res.json([]);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch unpaid invoices", error: (error as Error).message });
     }
@@ -2779,21 +2984,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/refunds", authenticateToken, asAuth(async (req, res) => {
     try {
-      const snapshot = await latestSnapshotForUser(req.user.id);
+      const snapshot = await latestSnapshotForOrg(req.organizationId);
       if (snapshot) return res.json(refunds30d(snapshot));
-      // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
-      if (!isDemoEnvironment()) return res.json([]);
-      // Mock data for refunds over time
-      const data = Array.from({ length: 30 }, (_, i) => {
-        const date = new Date();
-        date.setDate(date.getDate() - (29 - i));
-        return {
-          date: date.toISOString().split('T')[0],
-          refunds: Math.floor(Math.random() * 15) + 2,
-          amount: Math.floor(Math.random() * 5000) + 500,
-        };
-      });
-      res.json(data);
+      // No synced ERP data for this organization yet: empty state, never fabricated numbers
+      res.json([]);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch refunds data", error: (error as Error).message });
     }
@@ -2801,21 +2995,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
 
   app.get("/api/charts/cancellations", authenticateToken, asAuth(async (req, res) => {
     try {
-      const snapshot = await latestSnapshotForUser(req.user.id);
+      const snapshot = await latestSnapshotForOrg(req.organizationId);
       if (snapshot) return res.json(cancellations30d(snapshot));
-      // Fabricated series are for the demo deployment only; production shows an empty state until an ERP feeds it
-      if (!isDemoEnvironment()) return res.json([]);
-      // Mock data for cancellations
-      const data = Array.from({ length: 30 }, (_, i) => {
-        const date = new Date();
-        date.setDate(date.getDate() - (29 - i));
-        return {
-          date: date.toISOString().split('T')[0],
-          cancellations: Math.floor(Math.random() * 20) + 5,
-          reason: ['Customer Request', 'Out of Stock', 'Payment Failed', 'Duplicate Order'][Math.floor(Math.random() * 4)],
-        };
-      });
-      res.json(data);
+      // No synced ERP data for this organization yet: empty state, never fabricated numbers
+      res.json([]);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch cancellations data", error: (error as Error).message });
     }
@@ -3190,7 +3373,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
       
       // Get aggregated ERP data
-      const erpData = await erpService.aggregateERPData(req.user.id);
+      const erpData = await erpService.aggregateERPData(req.organizationId);
       
       // Send to ChatGPT for analysis
       let response;
@@ -3198,10 +3381,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         response = await analyzeERPData({
           query,
           erpData,
-          userId: req.user.id
+          userId: req.user.id,
+          organizationId: req.organizationId
         });
       } catch (aiError) {
-        console.error('AI analysis failed:', aiError);
+        if (aiError instanceof AiNotConfiguredError) {
+          return res.status(aiError.status).json({ message: aiError.message, code: aiError.code });
+        }
+        console.error('AI analysis failed:', (aiError as Error).message);
         response = {
           response: "AI analysis temporarily unavailable: " + (aiError as Error).message,
           insights: [],
@@ -3359,7 +3546,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const previousMessages = await storage.getChatHistoryByConversation(conversationId, 10);
       
       // Get aggregated ERP data
-      const erpData = await erpService.aggregateERPData(req.user.id);
+      const erpData = await erpService.aggregateERPData(req.organizationId);
       
       // Send to ChatGPT for analysis with context
       const startTime = Date.now();
@@ -3368,10 +3555,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         response = await analyzeERPData({
           query,
           erpData,
-          userId: req.user.id
+          userId: req.user.id,
+          organizationId: req.organizationId
         });
       } catch (aiError) {
-        console.error('AI analysis failed:', aiError);
+        if (aiError instanceof AiNotConfiguredError) {
+          return res.status(aiError.status).json({ message: aiError.message, code: aiError.code });
+        }
+        console.error('AI analysis failed:', (aiError as Error).message);
         response = {
           response: "AI analysis temporarily unavailable: " + (aiError as Error).message,
           insights: [],
@@ -3522,7 +3713,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   // KPI Insights route
   app.get("/api/insights", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
     try {
-      const kpis = await storage.getKpiConfigurations(req.user.id);
+      const kpis = await storage.getKpiConfigurations(req.organizationId);
       const kpiData: Record<string, any> = {};
       
       for (const kpi of kpis) {
@@ -3536,7 +3727,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         }
       }
       
-      const insights = await generateKPIInsights(kpiData);
+      const insights = await generateKPIInsights(req.organizationId, kpiData);
       res.json(insights);
     } catch (error) {
       res.status(500).json({ message: "Failed to generate insights", error: (error as Error).message });
@@ -3551,10 +3742,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const userId = req.user.id;
       
       // Get aggregated ERP data
-      const erpData = await erpService.aggregateERPData(userId);
+      const erpData = await erpService.aggregateERPData(req.organizationId);
       
       // Get KPI configurations and latest data
-      const kpis = await storage.getKpiConfigurations(userId);
+      const kpis = await storage.getKpiConfigurations(req.organizationId);
       const kpiSummary = await Promise.all(
         kpis.map(async (kpi) => {
           const latestData = await storage.getLatestKpiData(kpi.id);
@@ -3570,10 +3761,10 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       );
       
       // Get connected ERP systems
-      const erpSystems = await erpService.getConnectedSystems(userId);
+      const erpSystems = await erpService.getConnectedSystems(req.organizationId);
       const connectedSystemsCount = erpSystems.filter(s => s.isConnected).length;
       
-      const snapshot = await latestSnapshotForUser(userId);
+      const snapshot = await latestSnapshotForOrg(req.organizationId);
       if (snapshot) {
         const live = liveBusinessMetrics(snapshot);
         return res.json({
@@ -3584,8 +3775,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         });
       }
 
-      // Get business metrics (illustrative figures only on the demo deployment)
-      const demo = isDemoEnvironment();
+      // No synced ERP data: zeros, never illustrative figures
+      const demo = false;
       const businessMetrics = {
         totalRevenue: erpData.financials?.totalRevenue ?? (demo ? 2450000 : 0),
         monthlyGrowth: demo ? 12.5 : 0,
@@ -3620,38 +3811,12 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const { period = "12m", granularity = "month" } = req.query;
       
       // Get financial data from ERP systems
-      const erpData = await erpService.aggregateERPData(userId);
-      
-      // Generate mock revenue data for demo (in real implementation, this would come from ERP)
-      const generateRevenueData = (months: number) => {
-        const data = [];
-        const now = new Date();
-        
-        for (let i = months - 1; i >= 0; i--) {
-          const date = new Date(now);
-          date.setMonth(date.getMonth() - i);
-          
-          const baseRevenue = 2000000;
-          const seasonality = Math.sin((date.getMonth() / 12) * 2 * Math.PI) * 0.2 + 1;
-          const growth = Math.pow(1.02, months - i - 1); // 2% monthly growth
-          const randomVariation = (Math.random() - 0.5) * 0.1 + 1;
-          
-          data.push({
-            period: date.toISOString().slice(0, 7), // YYYY-MM format
-            revenue: Math.round(baseRevenue * seasonality * growth * randomVariation),
-            target: Math.round(baseRevenue * growth * 1.1),
-            previousYear: Math.round(baseRevenue * seasonality * Math.pow(1.15, -12) * randomVariation)
-          });
-        }
-        return data;
-      };
+      const erpData = await erpService.aggregateERPData(req.organizationId);
       
       const periodMonths = period === "12m" ? 12 : period === "6m" ? 6 : 3;
       // Synthetic series only on the demo deployment; production is empty until ERP revenue is wired in
-      const snapshot = await latestSnapshotForUser(userId);
-      const revenueData = snapshot
-        ? monthlyRevenue(snapshot, periodMonths)
-        : (isDemoEnvironment() ? generateRevenueData(periodMonths) : []);
+      const snapshot = await latestSnapshotForOrg(req.organizationId);
+      const revenueData = snapshot ? monthlyRevenue(snapshot, periodMonths) : [];
       
       // Calculate trends
       const currentRevenue = revenueData[revenueData.length - 1]?.revenue || 0;
@@ -3684,11 +3849,11 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const userId = req.user.id;
       
       // Get ERP systems and their performance data
-      const erpSystems = await erpService.getConnectedSystems(userId);
-      const erpData = await erpService.aggregateERPData(userId);
+      const erpSystems = await erpService.getConnectedSystems(req.organizationId);
+      const erpData = await erpService.aggregateERPData(req.organizationId);
       
-      // Health metrics are not collected yet; the demo deployment shows illustrative numbers
-      const demo = isDemoEnvironment();
+      // Health metrics are not collected yet: zeros until a connector reports them
+      const demo = false;
       const systemPerformance = erpSystems.map(system => {
         const live = system.isConnected && demo;
         const basePerformance = live ? 85 + Math.random() * 10 : 0;
@@ -3749,9 +3914,9 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       const userId = req.user.id;
       
       // Get comprehensive business data
-      const kpis = await storage.getKpiConfigurations(userId);
-      const erpData = await erpService.aggregateERPData(userId);
-      const erpSystems = await erpService.getConnectedSystems(userId);
+      const kpis = await storage.getKpiConfigurations(req.organizationId);
+      const erpData = await erpService.aggregateERPData(req.organizationId);
+      const erpSystems = await erpService.getConnectedSystems(req.organizationId);
       
       // Prepare data for AI analysis
       const kpiData: Record<string, any> = {};
@@ -3767,14 +3932,14 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       }
       
       // Generate insights using AI (this calls the existing function)
-      const aiInsights = await generateKPIInsights({
+      const aiInsights = await generateKPIInsights(req.organizationId, {
         ...kpiData,
         erpData,
         connectedSystems: erpSystems.filter(s => s.isConnected).length
       });
       
       // Illustrative insights for the demo deployment only
-      const businessInsights: Array<Record<string, string>> = !isDemoEnvironment() ? [] : [
+      const businessInsights: Array<Record<string, string>> = true ? [] : [
         {
           type: "opportunity",
           title: "Revenue Growth Opportunity",
@@ -3828,8 +3993,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
       switch (type) {
         case "overview":
           // Export overview data
-          const erpData = await erpService.aggregateERPData(userId);
-          const kpis = await storage.getKpiConfigurations(userId);
+          const erpData = await erpService.aggregateERPData(req.organizationId);
+          const kpis = await storage.getKpiConfigurations(req.organizationId);
           const kpiData = await Promise.all(
             kpis.map(async (kpi) => {
               const latestData = await storage.getLatestKpiData(kpi.id);
@@ -3887,8 +4052,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.get("/api/realtime/kpi-updates", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
     try {
       // Fetch latest KPI data (same logic as WebSocket implementation)
-      const kpis = await storage.getKpiConfigurations(req.user.id);
-      const latest = await storage.getLatestKpiDataForUser(req.user.id);
+      const kpis = await storage.getKpiConfigurations(req.organizationId);
+      const latest = await storage.getLatestKpiDataForOrg(req.organizationId);
       const kpiUpdates = [];
 
       for (const kpi of kpis.slice(0, 5)) { // Limit to 5 KPIs for performance
@@ -3921,7 +4086,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.get("/api/realtime/erp-status", authenticateToken, requirePermission("erp_connections", "read"), asAuth(async (req, res) => {
     try {
       // Fetch ERP systems status (same logic as WebSocket implementation)
-      const systems = await erpService.getConnectedSystems(req.user.id);
+      const systems = await erpService.getConnectedSystems(req.organizationId);
       const erpSystems = systems.map(system => ({
         name: system.name,
         displayName: system.displayName,
@@ -3947,7 +4112,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   app.get("/api/realtime/insights", authenticateToken, requirePermission("kpis", "read"), asAuth(async (req, res) => {
     try {
       // Generate insights for real-time updates
-      const kpis = await storage.getKpiConfigurations(req.user.id);
+      const kpis = await storage.getKpiConfigurations(req.organizationId);
       const kpiData: Record<string, any> = {};
       
       for (const kpi of kpis) {
@@ -3961,7 +4126,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         }
       }
       
-      const insights = await generateKPIInsights(kpiData);
+      const insights = await generateKPIInsights(req.organizationId, kpiData);
       
       res.json({
         type: 'insights_update',
@@ -4159,10 +4324,12 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
                 // Load user permissions for WebSocket security
                 const userWithPermissions = await RBACService.getUserWithPermissions(user.id);
                 if (userWithPermissions) {
+                  const orgCtx = await resolveOrganizationForUser(user.id, typeof message.organizationId === 'string' ? message.organizationId : undefined);
                   const list = wsClients.get(user.id) || [];
                   list.push({
                     ws,
                     user,
+                    organizationId: orgCtx.organization.id,
                     permissions: userWithPermissions.permissions.map(p => `${p.resource}.${p.action}`)
                   });
                   wsClients.set(user.id, list);
@@ -4204,7 +4371,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           
           try {
             // Fetch latest KPI data
-            const kpis = await storage.getKpiConfigurations(userId);
+            const kpis = await storage.getKpiConfigurations(client.organizationId);
             const kpiUpdates = [];
             
             for (const kpi of kpis.slice(0, 5)) { // Limit to 5 KPIs

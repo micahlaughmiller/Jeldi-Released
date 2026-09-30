@@ -1,18 +1,14 @@
-import OpenAI from "openai";
-
-// the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
-function getOpenAIClient() {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY environment variable is required');
-  }
-  return new OpenAI({ apiKey });
-}
+/**
+ * ERP analysis prompts. Model access goes through aiService, which uses the organization's own
+ * OpenAI or Anthropic key (the platform key only on the demo deployment).
+ */
+import { resolveAi, completeJson } from "./aiService";
 
 export interface ERPQueryRequest {
   query: string;
   erpData: Record<string, any>;
   userId: string;
+  organizationId: string;
   conversationHistory?: Array<{query: string, response: string}>;
   context?: string;
 }
@@ -101,33 +97,8 @@ Respond in JSON format with the structure:
   "followUpQuestions": ["string"]
 }`;
 
-    const openai = getOpenAIClient();
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 1500,
-    });
-
-    if (!response.choices || response.choices.length === 0) {
-      throw new Error('OpenAI returned no response choices');
-    }
-    
-    const responseContent = response.choices[0].message.content;
-    
-    if (!responseContent) {
-      throw new Error('OpenAI returned empty content');
-    }
-    
-    let result;
-    try {
-      result = JSON.parse(responseContent);
-    } catch (parseError) {
-      throw new Error('Failed to parse OpenAI response as JSON: ' + responseContent);
-    }
+    const ai = await resolveAi(request.organizationId);
+    const result = await completeJson(ai, { system: systemPrompt, user: userPrompt, maxTokens: 1500 });
 
     return {
       response: result.response || "Unable to analyze the data at this time.",
@@ -138,8 +109,8 @@ Respond in JSON format with the structure:
       followUpQuestions: result.followUpQuestions || []
     };
   } catch (error) {
-    console.error("OpenAI API error:", error);
-    throw new Error("Failed to analyze ERP data: " + (error as Error).message);
+    console.error("AI analysis error:", (error as Error).message);
+    throw error;
   }
 }
 
@@ -219,34 +190,22 @@ export const getBusinessTemplates = (): BusinessTemplate[] => [
   }
 ];
 
-export async function generateKPIInsights(kpiData: Record<string, any>): Promise<{
+export async function generateKPIInsights(organizationId: string, kpiData: Record<string, any>): Promise<{
   summary: string;
   alerts: string[];
   trends: string[];
 }> {
   try {
-    const openai = getOpenAIClient();
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are a KPI analyst. Analyze the provided KPI data and generate insights about performance trends, alerts for concerning metrics, and overall business health. Respond in JSON format."
-        },
-        {
-          role: "user",
-          content: `Analyze these KPI metrics and provide insights:
-          
-          ${JSON.stringify(kpiData, null, 2)}
-          
-          Respond with JSON: { "summary": "string", "alerts": ["string"], "trends": ["string"] }`
-        }
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 500,
-    });
+    const ai = await resolveAi(organizationId);
+    const result = await completeJson(ai, {
+      system: "You are a KPI analyst. Analyze the provided KPI data and generate insights about performance trends, alerts for concerning metrics, and overall business health. Respond in JSON format.",
+      user: `Analyze these KPI metrics and provide insights:
 
-    const result = JSON.parse(response.choices[0].message.content || "{}");
+${JSON.stringify(kpiData, null, 2)}
+
+Respond with JSON: { "summary": "string", "alerts": ["string"], "trends": ["string"] }`,
+      maxTokens: 600,
+    });
     
     return {
       summary: result.summary || "KPI analysis unavailable",

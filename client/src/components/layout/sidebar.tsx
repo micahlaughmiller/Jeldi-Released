@@ -1,4 +1,5 @@
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 
 interface User {
   id: string;
@@ -16,6 +17,10 @@ interface SidebarProps {
 
 export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: SidebarProps) {
   const [location] = useLocation();
+  const { data: org } = useQuery<{ organization: { displayName: string; logo: string | null } }>({
+    queryKey: ["/api/organizations/current"],
+    staleTime: 5 * 60 * 1000,
+  });
 
   const getUserInitials = (username: string) => {
     return username
@@ -31,12 +36,16 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
       {/* Sidebar Header */}
       <div className="p-6 border-b border-border">
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-            <i className="fas fa-network-wired text-primary-foreground text-sm"></i>
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold">Jeldi</h1>
-            <p className="text-xs text-muted-foreground">Business Decisions at the Speed of Thought</p>
+          {org?.organization.logo ? (
+            <img src={org.organization.logo} alt="" className="w-8 h-8 rounded-lg object-contain bg-muted" />
+          ) : (
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+              <i className="fas fa-network-wired text-primary-foreground text-sm"></i>
+            </div>
+          )}
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold truncate" data-testid="sidebar-org-name">{org?.organization.displayName ?? "Jeldi"}</h1>
+            <p className="text-xs text-muted-foreground truncate">{org ? "Powered by Jeldi" : "Business Decisions at the Speed of Thought"}</p>
           </div>
         </div>
       </div>

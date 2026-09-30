@@ -12,10 +12,15 @@ process.env.DEMO_MODE = "true";
 import { enforceEnvironmentValidation } from "../server/env-validation";
 import { initializeAllDemoData, DEMO_USERS } from "../server/services/demo-data";
 import { syncAll } from "../server/services/syncService";
+import { ensureOrganizationsForAllUsers } from "../server/services/orgService";
+import { RBACService } from "../server/services/rbac";
 
 async function main() {
   enforceEnvironmentValidation();
+  // Roles and permissions normally come up with the server; the seed needs them for org roles
+  await RBACService.initializeDefaultRoles();
   await initializeAllDemoData();
+  await ensureOrganizationsForAllUsers();
   const results = await syncAll();
   for (const r of results) {
     console.log(`${r.ok ? "synced" : "FAILED"} ${r.erpSystem} for user ${r.userId}: ${r.message}`, r.counts ?? "");

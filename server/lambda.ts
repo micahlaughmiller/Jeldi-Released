@@ -5,6 +5,7 @@ import type { APIGatewayProxyHandler, APIGatewayProxyEvent, Context } from "aws-
 import { registerRoutes } from "./routes";
 import { enforceEnvironmentValidation } from "./env-validation";
 import { initializeAllDemoData } from "./services/demo-data";
+import { ensureOrganizationsForAllUsers } from "./services/orgService";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -124,6 +125,7 @@ async function initializeAppOnce() {
 
       // Same startup seeding as server/index.ts (no-op unless DEMO_MODE=true)
       await initializeAllDemoData();
+      await ensureOrganizationsForAllUsers();
 
       // Error handling middleware
       app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

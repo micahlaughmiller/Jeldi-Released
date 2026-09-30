@@ -1,4 +1,5 @@
 import { 
+  organizationInvitations, type OrganizationInvitation, type InsertOrganizationInvitation,
   erpSnapshots, type ErpSnapshotRow, type InsertErpSnapshotRow,
   users, erpConnections, kpiConfigurations, kpiData, dashboardKpiPreferences, dashboardChartPreferences, emailConfigurations, chatHistory, oauthSessions, userPreferences,
   conversations, queryTemplates, favoriteQueries, roles, permissions, userRoles, rolePermissions, auditLog,
@@ -19,7 +20,7 @@ import {
   type OrganizationWithMembers, type UserWithOrganizations, type OrganizationMemberWithUser
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, or, inArray } from "drizzle-orm";
+import { eq, desc, and, sql, or, inArray, isNull } from "drizzle-orm";
 import { CONNECTOR_SYSTEMS } from "./connectors";
 import { encryptionService } from "./services/encryptionService";
 
@@ -244,8 +245,9 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
-  async getErpConnections(userId: string): Promise<ErpConnection[]> {
-    const connections = await db.select().from(erpConnections).where(eq(erpConnections.userId, userId));
+  /** All ERP connections of an organization (the tenant), credentials decrypted */
+  async getErpConnections(organizationId: string): Promise<ErpConnection[]> {
+    const connections = await db.select().from(erpConnections).where(eq(erpConnections.organizationId, organizationId));
     
     // Decrypt sensitive fields
     return connections.map(conn => ({
@@ -257,9 +259,9 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async getErpConnection(userId: string, erpSystem: string): Promise<ErpConnection | undefined> {
+  async getErpConnection(organizationId: string, erpSystem: string): Promise<ErpConnection | undefined> {
     const [connection] = await db.select().from(erpConnections)
-      .where(and(eq(erpConnections.userId, userId), eq(erpConnections.erpSystem, erpSystem)));
+      .where(and(eq(erpConnections.organizationId, organizationId), eq(erpConnections.erpSystem, erpSystem)));
     
     if (!connection) return undefined;
     
@@ -298,7 +300,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async saveErpSnapshot(row: InsertErpSnapshotRow): Promise<ErpSnapshotRow> {
-    this.invalidateSnapshotCache(row.userId);
+    this.invalidateSnapshotCache(row.organizationId ?? row.userId);
     const [saved] = await db.insert(erpSnapshots).values(row).returning();
     // Keep only the newest few snapshots per connection
     const stale = await db.select({ id: erpSnapshots.id }).from(erpSnapshots)
@@ -312,21 +314,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   /** Newest snapshot for each of the user's still-connected ERP connections */
-  async getLatestErpSnapshots(userId: string): Promise<ErpSnapshotRow[]> {
-    const cached = this.snapshotCache.get(userId);
+  async getLatestErpSnapshots(organizationId: string): Promise<ErpSnapshotRow[]> {
+    const cached = this.snapshotCache.get(organizationId);
     if (cached && Date.now() - cached.at < DatabaseStorage.SNAPSHOT_TTL_MS) return cached.rows;
-    const rows = await this.loadLatestErpSnapshots(userId);
-    this.snapshotCache.set(userId, { at: Date.now(), rows });
+    const rows = await this.loadLatestErpSnapshots(organizationId);
+    this.snapshotCache.set(organizationId, { at: Date.now(), rows });
     return rows;
   }
 
-  private async loadLatestErpSnapshots(userId: string): Promise<ErpSnapshotRow[]> {
+  private async loadLatestErpSnapshots(organizationId: string): Promise<ErpSnapshotRow[]> {
     const connected = new Set(
       (await db.select({ id: erpConnections.id }).from(erpConnections)
-        .where(and(eq(erpConnections.userId, userId), eq(erpConnections.isConnected, true)))).map(r => r.id)
+        .where(and(eq(erpConnections.organizationId, organizationId), eq(erpConnections.isConnected, true)))).map(r => r.id)
     );
     const rows = await db.select().from(erpSnapshots)
-      .where(eq(erpSnapshots.userId, userId))
+      .where(eq(erpSnapshots.organizationId, organizationId))
       .orderBy(desc(erpSnapshots.fetchedAt));
     const seen = new Set<string>();
     const latest: ErpSnapshotRow[] = [];
@@ -394,10 +396,44 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getKpiConfigurations(userId: string): Promise<KpiConfiguration[]> {
+  /** KPI definitions are shared by the organization */
+  async getKpiConfigurations(organizationId: string): Promise<KpiConfiguration[]> {
     return await db.select().from(kpiConfigurations)
-      .where(eq(kpiConfigurations.userId, userId))
+      .where(eq(kpiConfigurations.organizationId, organizationId))
       .orderBy(kpiConfigurations.position);
+  }
+
+  /** Move legacy per-user rows (created before organizations existed) under the user's organization */
+  async backfillOrganizationScope(userId: string, organizationId: string): Promise<number> {
+    let n = 0;
+    n += affected(await db.update(erpConnections).set({ organizationId }).where(and(eq(erpConnections.userId, userId), isNull(erpConnections.organizationId))));
+    n += affected(await db.update(erpSnapshots).set({ organizationId }).where(and(eq(erpSnapshots.userId, userId), isNull(erpSnapshots.organizationId))));
+    n += affected(await db.update(kpiConfigurations).set({ organizationId }).where(and(eq(kpiConfigurations.userId, userId), isNull(kpiConfigurations.organizationId))));
+    if (n) this.invalidateSnapshotCache();
+    return n;
+  }
+
+  // Organization invitations
+  async createOrganizationInvitation(inv: InsertOrganizationInvitation): Promise<OrganizationInvitation> {
+    const [row] = await db.insert(organizationInvitations).values(inv).returning();
+    return row;
+  }
+  async getOrganizationInvitationByToken(token: string): Promise<OrganizationInvitation | undefined> {
+    const [row] = await db.select().from(organizationInvitations).where(eq(organizationInvitations.token, token));
+    return row || undefined;
+  }
+  async getOrganizationInvitations(organizationId: string): Promise<OrganizationInvitation[]> {
+    return await db.select().from(organizationInvitations)
+      .where(eq(organizationInvitations.organizationId, organizationId))
+      .orderBy(desc(organizationInvitations.createdAt));
+  }
+  async acceptOrganizationInvitation(id: string): Promise<void> {
+    await db.update(organizationInvitations).set({ acceptedAt: new Date() }).where(eq(organizationInvitations.id, id));
+  }
+  async deleteOrganizationInvitation(id: string, organizationId: string): Promise<boolean> {
+    const result = await db.delete(organizationInvitations)
+      .where(and(eq(organizationInvitations.id, id), eq(organizationInvitations.organizationId, organizationId)));
+    return affected(result) > 0;
   }
 
   async createKpiConfiguration(config: InsertKpiConfiguration): Promise<KpiConfiguration> {
@@ -427,14 +463,14 @@ export class DatabaseStorage implements IStorage {
     return data || undefined;
   }
 
-  /** Newest kpi_data row per KPI configuration for a user, in one query */
-  async getLatestKpiDataForUser(userId: string): Promise<Map<string, KpiData>> {
+  /** Newest kpi_data row per KPI configuration of an organization, in one query */
+  async getLatestKpiDataForOrg(organizationId: string): Promise<Map<string, KpiData>> {
     const rows = await db.selectDistinctOn([kpiData.kpiId], {
       id: kpiData.id, kpiId: kpiData.kpiId, value: kpiData.value, change: kpiData.change, timestamp: kpiData.timestamp,
     })
       .from(kpiData)
       .innerJoin(kpiConfigurations, eq(kpiData.kpiId, kpiConfigurations.id))
-      .where(eq(kpiConfigurations.userId, userId))
+      .where(eq(kpiConfigurations.organizationId, organizationId))
       .orderBy(kpiData.kpiId, desc(kpiData.timestamp));
     return new Map(rows.map(r => [r.kpiId, r as KpiData]));
   }
@@ -1153,6 +1189,29 @@ export class DatabaseStorage implements IStorage {
     ));
   }
 
+  /** Permissions from global roles plus roles scoped to this organization */
+  async getUserPermissionsInOrg(userId: string, organizationId: string): Promise<Permission[]> {
+    return await db.select({
+      id: permissions.id,
+      name: permissions.name,
+      displayName: permissions.displayName,
+      description: permissions.description,
+      category: permissions.category,
+      resource: permissions.resource,
+      action: permissions.action,
+      isSystem: permissions.isSystem,
+      createdAt: permissions.createdAt,
+    })
+    .from(permissions)
+    .innerJoin(rolePermissions, eq(permissions.id, rolePermissions.permissionId))
+    .innerJoin(userRoles, eq(rolePermissions.roleId, userRoles.roleId))
+    .where(and(
+      eq(userRoles.userId, userId),
+      eq(userRoles.isActive, true),
+      or(isNull(userRoles.organizationId), eq(userRoles.organizationId, organizationId))
+    ));
+  }
+
   // Role Permission operations
   async getRolePermissions(roleId: string): Promise<Permission[]> {
     return await db.select({
@@ -1368,6 +1427,7 @@ export class DatabaseStorage implements IStorage {
       profileImage: users.profileImage,
       firstName: users.firstName,
       lastName: users.lastName,
+      defaultOrganizationId: users.defaultOrganizationId,
       createdAt: users.createdAt,
     })
     .from(users)

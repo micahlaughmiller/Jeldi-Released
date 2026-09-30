@@ -36,12 +36,13 @@ export async function syncConnection(connection: ErpConnection): Promise<SyncRes
     await storage.saveErpSnapshot({
       connectionId: connection.id,
       userId: connection.userId,
+      organizationId: connection.organizationId,
       erpSystem: connection.erpSystem,
       snapshot,
       warnings: snapshot.warnings,
     });
     await storage.updateErpConnection(connection.id, { lastSync: new Date(), isConnected: true });
-    await writeKpiValues(connection.userId);
+    if (connection.organizationId) await writeKpiValues(connection.organizationId);
     return {
       ...base,
       ok: true,
@@ -66,9 +67,9 @@ export async function syncConnection(connection: ErpConnection): Promise<SyncRes
   }
 }
 
-/** Sync every connector-backed connection a user has */
-export async function syncUser(userId: string): Promise<SyncResult[]> {
-  const connections = (await storage.getErpConnections(userId)).filter(c => c.isConnected && hasConnector(c.erpSystem));
+/** Sync every connector-backed connection an organization has */
+export async function syncOrganization(organizationId: string): Promise<SyncResult[]> {
+  const connections = (await storage.getErpConnections(organizationId)).filter(c => c.isConnected && hasConnector(c.erpSystem));
   const results: SyncResult[] = [];
   for (const c of connections) results.push(await syncConnection(c));
   return results;
@@ -84,9 +85,9 @@ export async function syncAll(): Promise<SyncResult[]> {
   return results;
 }
 
-/** Latest merged snapshot for a user, or null when nothing has been synced yet */
-export async function latestSnapshotForUser(userId: string): Promise<ErpSnapshot | null> {
-  const rows = await storage.getLatestErpSnapshots(userId);
+/** Latest merged snapshot for an organization, or null when nothing has been synced yet */
+export async function latestSnapshotForOrg(organizationId: string): Promise<ErpSnapshot | null> {
+  const rows = await storage.getLatestErpSnapshots(organizationId);
   if (rows.length === 0) return null;
   return mergeSnapshots(rows.map(r => r.snapshot as ErpSnapshot));
 }
@@ -96,11 +97,11 @@ export async function latestSnapshotForUser(userId: string): Promise<ErpSnapshot
  * matching KPI configuration. Only universal KPI types are known to the engine; a user's
  * custom KPI types are left untouched.
  */
-export async function writeKpiValues(userId: string, now: Date = new Date()): Promise<number> {
-  const snapshot = await latestSnapshotForUser(userId);
+export async function writeKpiValues(organizationId: string, now: Date = new Date()): Promise<number> {
+  const snapshot = await latestSnapshotForOrg(organizationId);
   if (!snapshot) return 0;
   const kpis = computeKpis(snapshot, now);
-  const configs = await storage.getKpiConfigurations(userId);
+  const configs = await storage.getKpiConfigurations(organizationId);
   let written = 0;
   for (const config of configs) {
     const kpi = kpis[config.type as KpiType];

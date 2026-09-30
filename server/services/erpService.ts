@@ -6,6 +6,12 @@ import { hasConnector } from "../connectors";
 import type { ErpSnapshot } from "../connectors/types";
 import { summarizeSnapshot } from "./kpiEngine";
 
+/** Who is acting (userId) and which tenant owns the result (organizationId) */
+export interface ErpScope {
+  userId: string;
+  organizationId: string;
+}
+
 export interface ERPSystem {
   name: string;
   displayName: string;
@@ -176,8 +182,8 @@ if (isDemoEnvironment() || process.env.NODE_ENV !== "production") {
 }
 
 export class ERPService {
-  async getConnectedSystems(userId: string): Promise<ERPSystem[]> {
-    const connections = await storage.getErpConnections(userId);
+  async getConnectedSystems(organizationId: string): Promise<ERPSystem[]> {
+    const connections = await storage.getErpConnections(organizationId);
     
     return Object.values(ERP_SYSTEMS).map(system => ({
       ...system,
@@ -186,17 +192,19 @@ export class ERPService {
     }));
   }
 
-  async initiateOAuthFlow(erpSystem: string, userId: string, redirectUri: string): Promise<string> {
+  async initiateOAuthFlow(erpSystem: string, scope: ErpScope, redirectUri: string): Promise<string> {
+    const { userId, organizationId } = scope;
     const system = ERP_SYSTEMS[erpSystem];
     if (!system) {
       throw new Error(`ERP system ${erpSystem} not supported`);
     }
 
     // Store or update connection record
-    const existingConnection = await storage.getErpConnection(userId, erpSystem);
+    const existingConnection = await storage.getErpConnection(organizationId, erpSystem);
     if (!existingConnection) {
       await storage.createErpConnection({
         userId,
+        organizationId,
         erpSystem,
         isConnected: false,
         config: system.oauthConfig
@@ -210,7 +218,7 @@ export class ERPService {
       provider: `erp_${erpSystem}`,
       isCompleted: false,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-      authResult: JSON.stringify({ userId, erpSystem, redirectUri })
+      authResult: JSON.stringify({ userId, organizationId, erpSystem, redirectUri })
     });
 
     // Generate OAuth URL
@@ -230,7 +238,7 @@ export class ERPService {
     if (!session || !session.provider.startsWith("erp_") || session.isCompleted || new Date() > session.expiresAt) {
       throw new Error("Invalid or expired ERP OAuth session");
     }
-    const { userId, erpSystem, redirectUri } = JSON.parse(session.authResult as string) as { userId: string; erpSystem: string; redirectUri: string };
+    const { organizationId, erpSystem, redirectUri } = JSON.parse(session.authResult as string) as { userId: string; organizationId: string; erpSystem: string; redirectUri: string };
     await storage.updateOAuthSession(session.id, { isCompleted: true });
 
     const system = ERP_SYSTEMS[erpSystem];
@@ -260,7 +268,7 @@ export class ERPService {
     const tokens = await tokenResponse.json();
     
     // Update connection with tokens
-    const connection = await storage.getErpConnection(userId, erpSystem);
+    const connection = await storage.getErpConnection(organizationId, erpSystem);
     if (!connection) {
       throw new Error("Connection not found");
     }
@@ -280,8 +288,8 @@ export class ERPService {
     return updatedConnection;
   }
 
-  async fetchERPData(userId: string, erpSystem: string, endpoint: string): Promise<any> {
-    const connection = await storage.getErpConnection(userId, erpSystem);
+  async fetchERPData(organizationId: string, erpSystem: string, endpoint: string): Promise<any> {
+    const connection = await storage.getErpConnection(organizationId, erpSystem);
     if (!connection || !connection.isConnected || !connection.accessToken) {
       throw new Error(`${erpSystem} not connected`);
     }
@@ -306,15 +314,15 @@ export class ERPService {
     return await response.json();
   }
 
-  async aggregateERPData(userId: string): Promise<Record<string, any>> {
-    const connections = await storage.getErpConnections(userId);
+  async aggregateERPData(organizationId: string): Promise<Record<string, any>> {
+    const connections = await storage.getErpConnections(organizationId);
     const connectedSystems = connections.filter(conn => conn.isConnected);
     
     const aggregatedData: Record<string, any> = {};
 
     // If user has connected systems, fetch real data
     if (connectedSystems.length > 0) {
-      const snapshots = connectedSystems.some(c => hasConnector(c.erpSystem)) ? await storage.getLatestErpSnapshots(userId) : [];
+      const snapshots = connectedSystems.some(c => hasConnector(c.erpSystem)) ? await storage.getLatestErpSnapshots(organizationId) : [];
       for (const connection of connectedSystems) {
         // Connector-backed systems (Epicor, SyteLine, demo) are summarised from the synced snapshot
         if (hasConnector(connection.erpSystem)) {
@@ -326,16 +334,13 @@ export class ERPService {
         }
         try {
           // Fetch basic data from each connected ERP
-          const data = await this.fetchERPData(userId, connection.erpSystem, "/summary");
+          const data = await this.fetchERPData(organizationId, connection.erpSystem, "/summary");
           aggregatedData[connection.erpSystem] = data;
         } catch (error) {
           console.error(`Failed to fetch data from ${connection.erpSystem}:`, error);
           aggregatedData[connection.erpSystem] = { error: (error as Error).message };
         }
       }
-    } else if (isDemoEnvironment()) {
-      // Sample company data for the demo deployment only
-      aggregatedData.demo = this.getDemoERPData();
     }
 
     return aggregatedData;
@@ -435,8 +440,8 @@ export class ERPService {
     };
   }
 
-  async disconnectSystem(userId: string, erpSystem: string): Promise<void> {
-    const connection = await storage.getErpConnection(userId, erpSystem);
+  async disconnectSystem(organizationId: string, erpSystem: string): Promise<void> {
+    const connection = await storage.getErpConnection(organizationId, erpSystem);
     if (!connection) {
       throw new Error(`${erpSystem} connection not found`);
     }
@@ -545,7 +550,7 @@ export class ERPService {
   }
 
   async connectWithApiKey(
-    userId: string,
+    scope: ErpScope,
     erpSystem: string,
     apiKey: string,
     apiSecret?: string,
@@ -574,8 +579,8 @@ export class ERPService {
     }
 
     // Check for existing connection
-    const existingConnection = await storage.getErpConnection(userId, erpSystem);
-    
+    const existingConnection = await storage.getErpConnection(scope.organizationId, erpSystem);
+
     if (existingConnection) {
       // Update existing connection
       const updated = await storage.updateErpConnection(existingConnection.id, {
@@ -595,7 +600,8 @@ export class ERPService {
     } else {
       // Create new connection
       return await storage.createErpConnection({
-        userId,
+        userId: scope.userId,
+        organizationId: scope.organizationId,
         erpSystem,
         connectionType: "api_key",
         authMethod: "api_key",
@@ -609,7 +615,7 @@ export class ERPService {
   }
 
   async connectCustomERP(
-    userId: string,
+    scope: ErpScope,
     customName: string,
     apiBaseUrl: string,
     authMethod: string,
@@ -633,7 +639,8 @@ export class ERPService {
 
     // Create custom ERP connection
     return await storage.createErpConnection({
-      userId,
+      userId: scope.userId,
+      organizationId: scope.organizationId,
       erpSystem: customName.toLowerCase().replace(/\s+/g, '_'),
       connectionType: "custom",
       authMethod,

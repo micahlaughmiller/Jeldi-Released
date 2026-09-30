@@ -13,6 +13,16 @@ import { getApiUrl } from "@/lib/api-config";
 export default function Login() {
   const [, setLocation] = useLocation();
   const [isLoading, setIsLoading] = useState(false);
+  // Invitation link: /login?invite=<token> lands on the register tab, joined to the inviting organization
+  const inviteToken = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("invite") : null;
+  const [invitation, setInvitation] = useState<{ email: string; roleName: string; organization: { displayName: string } | null } | null>(null);
+  useEffect(() => {
+    if (!inviteToken) return;
+    fetch(getApiUrl(`/api/invitations/${encodeURIComponent(inviteToken)}`))
+      .then(r => (r.ok ? r.json() : null))
+      .then(setInvitation)
+      .catch(() => setInvitation(null));
+  }, [inviteToken]);
   const [oauthProviders, setOauthProviders] = useState<{name: string; displayName: string}[]>([]);
   const { toast } = useToast();
 
@@ -128,10 +138,10 @@ export default function Login() {
     const username = formData.get("username") as string;
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
+    const organizationName = (formData.get("organizationName") as string | null) || undefined;
 
     try {
-      console.log("Attempting registration with:", { username, email: email.substring(0, 10) + "..." });
-      const response = await apiRequest("POST", "/api/auth/register", { username, email, password });
+      const response = await apiRequest("POST", "/api/auth/register", { username, email, password, organizationName, inviteToken: inviteToken || undefined });
       const data = await response.json();
       
       localStorage.setItem("token", data.token);
@@ -186,7 +196,7 @@ export default function Login() {
           </div>
         </div>
 
-        <Tabs defaultValue="login" className="w-full">
+        <Tabs defaultValue={inviteToken ? "register" : "login"} className="w-full">
           <TabsList className="grid w-full grid-cols-2" data-testid="auth-tabs">
             <TabsTrigger value="login" data-testid="tab-login">Login</TabsTrigger>
             <TabsTrigger value="register" data-testid="tab-register">Register</TabsTrigger>
@@ -308,9 +318,19 @@ export default function Login() {
                       type="email"
                       placeholder="john@company.com"
                       required
-                      data-testid="input-register-email"
+                      data-testid="input-register-email" defaultValue={invitation?.email ?? ""}
                     />
                   </div>
+                  {invitation ? (
+                    <div className="rounded-lg border bg-muted/40 p-3 text-sm" data-testid="invite-banner">
+                      You've been invited to join <span className="font-medium">{invitation.organization?.displayName ?? "an organization"}</span>. Register with <span className="font-medium">{invitation.email}</span> to accept.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label htmlFor="register-organization">Company name <span className="text-muted-foreground">(optional)</span></Label>
+                      <Input id="register-organization" name="organizationName" placeholder="Your company" data-testid="input-register-organization" />
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label htmlFor="register-password">Password</Label>
                     <Input

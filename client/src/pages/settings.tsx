@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import OrganizationSettings from "@/components/settings/organization-settings";
 import { useLocation } from "wouter";
 import Sidebar from "@/components/layout/sidebar";
 import { performLogout } from "@/lib/logout";
@@ -571,7 +572,7 @@ export default function Settings() {
           </TabsTrigger>
           <TabsTrigger value="organizations" className="flex items-center space-x-2" data-testid="tab-organizations">
             <Building2 className="h-4 w-4" />
-            <span>Organizations</span>
+            <span>Organization</span>
           </TabsTrigger>
           <TabsTrigger value="security" className="flex items-center space-x-2" data-testid="tab-security">
             <Shield className="h-4 w-4" />
@@ -1026,188 +1027,7 @@ export default function Settings() {
 
         {/* Organizations Tab */}
         <TabsContent value="organizations" className="space-y-6">
-          <div className="flex justify-between items-center">
-            <div>
-              <h2 className="text-xl font-semibold">Organizations</h2>
-              <p className="text-sm text-muted-foreground">Manage your organizations and team members</p>
-            </div>
-            <Button 
-              onClick={() => setShowCreateOrgDialog(true)} 
-              className="flex items-center space-x-2"
-              data-testid="button-create-organization"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Create Organization</span>
-            </Button>
-          </div>
-
-          {organizationsLoading ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-            </div>
-          ) : (
-            <div className="grid gap-6">
-              {organizations && organizations.length > 0 ? (
-                organizations.map((org) => (
-                  <Card key={org.id} className="hover:shadow-md transition-shadow">
-                    <CardHeader>
-                      <div className="flex justify-between items-start">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                            <Building2 className="h-6 w-6 text-primary" />
-                          </div>
-                          <div>
-                            <CardTitle className="text-lg" data-testid={`org-title-${org.id}`}>
-                              {org.displayName}
-                            </CardTitle>
-                            <p className="text-sm text-muted-foreground">@{org.name}</p>
-                            {org.description && (
-                              <p className="text-sm text-muted-foreground mt-1">{org.description}</p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex space-x-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setSelectedOrganization(org)}
-                            data-testid={`button-edit-org-${org.id}`}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              if (confirm("Are you sure you want to delete this organization?")) {
-                                deleteOrganizationMutation.mutate(org.id);
-                              }
-                            }}
-                            data-testid={`button-delete-org-${org.id}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center space-x-4">
-                          <div className="flex items-center space-x-2">
-                            <Users className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm" data-testid={`org-member-count-${org.id}`}>
-                              {org.memberCount} member{org.memberCount !== 1 ? 's' : ''}
-                            </span>
-                          </div>
-                          {org.website && (
-                            <a 
-                              href={org.website} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-sm text-primary hover:underline flex items-center space-x-1"
-                            >
-                              <Globe className="h-4 w-4" />
-                              <span>Website</span>
-                            </a>
-                          )}
-                        </div>
-                        <div className="flex space-x-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedOrganization(org);
-                              setShowInviteMemberDialog(true);
-                            }}
-                            data-testid={`button-invite-member-${org.id}`}
-                          >
-                            <UserPlus className="h-4 w-4 mr-2" />
-                            Invite Member
-                          </Button>
-                        </div>
-                      </div>
-
-                      {org.members && org.members.length > 0 && (
-                        <div className="mt-4">
-                          <h4 className="text-sm font-medium mb-2">Members</h4>
-                          <div className="space-y-2">
-                            {org.members.slice(0, 3).map((member) => (
-                              <div key={member.id} className="flex items-center justify-between p-2 bg-muted rounded-lg">
-                                <div className="flex items-center space-x-3">
-                                  <Avatar className="h-8 w-8">
-                                    <AvatarImage src={member.user.profileImage} />
-                                    <AvatarFallback>
-                                      {getUserInitials(member.user.username)}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <div>
-                                    <p className="text-sm font-medium" data-testid={`member-name-${member.id}`}>
-                                      {member.user.firstName && member.user.lastName 
-                                        ? `${member.user.firstName} ${member.user.lastName}`
-                                        : member.user.username
-                                      }
-                                    </p>
-                                    <p className="text-xs text-muted-foreground">{member.user.email}</p>
-                                  </div>
-                                </div>
-                                <div className="flex items-center space-x-2">
-                                  {member.isOwner && (
-                                    <Badge variant="secondary" className="flex items-center space-x-1">
-                                      <Crown className="h-3 w-3" />
-                                      <span>Owner</span>
-                                    </Badge>
-                                  )}
-                                  <Badge variant="outline" data-testid={`member-status-${member.id}`}>
-                                    {member.status}
-                                  </Badge>
-                                  {!member.isOwner && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => {
-                                        if (confirm("Are you sure you want to remove this member?")) {
-                                          removeMemberMutation.mutate({ orgId: org.id, userId: member.userId });
-                                        }
-                                      }}
-                                      data-testid={`button-remove-member-${member.id}`}
-                                    >
-                                      <Trash2 className="h-3 w-3" />
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                            {org.memberCount > 3 && (
-                              <p className="text-xs text-muted-foreground text-center">
-                                and {org.memberCount - 3} more member{org.memberCount - 3 !== 1 ? 's' : ''}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))
-              ) : (
-                <Card>
-                  <CardContent className="flex flex-col items-center justify-center py-16">
-                    <Building2 className="h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-medium mb-2">No organizations yet</h3>
-                    <p className="text-muted-foreground text-center mb-6 max-w-md">
-                      Create your first organization to start managing teams and permissions.
-                    </p>
-                    <Button 
-                      onClick={() => setShowCreateOrgDialog(true)}
-                      data-testid="button-create-first-organization"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Create Your First Organization
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          )}
+          <OrganizationSettings />
         </TabsContent>
 
         {/* Security Tab */}

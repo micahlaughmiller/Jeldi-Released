@@ -5,6 +5,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { enforceEnvironmentValidation } from "./env-validation";
 import { initializeAllDemoData } from "./services/demo-data";
 import { startSyncScheduler } from "./services/syncService";
+import { ensureOrganizationsForAllUsers } from "./services/orgService";
 
 // Enforce environment validation before starting application
 enforceEnvironmentValidation();
@@ -66,6 +67,9 @@ app.use((req, res, next) => {
 
   // Initialize demo data if in demo.jeldi.app environment
   await initializeAllDemoData();
+
+  // Every user gets an organization; pre-organization rows are moved under it
+  await ensureOrganizationsForAllUsers();
 
   // Pull ERP data on a schedule (long-running server only; Lambda uses sync-lambda.ts)
   startSyncScheduler();

@@ -6,6 +6,9 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthUser;
   userPermissions?: Permission[];
   userRoles?: Role[];
+  /** Tenant the request acts on (set by authenticateToken) */
+  organizationId?: string;
+  orgRole?: "owner" | "admin" | "member";
 }
 
 export class RBACService {
@@ -369,7 +372,12 @@ export const requirePermission = (resource: string, action: string) => {
       return res.status(401).json({ message: "Authentication required" });
     }
 
-    const hasPermission = req.user.role === "admin" || await RBACService.hasPermission(req.user.id, resource, action);
+    // Platform admins and organization owners/admins pass; everyone else needs an org-scoped or global role that grants it
+    const hasPermission = req.user.role === "admin"
+      || req.orgRole === "owner" || req.orgRole === "admin"
+      || (req.organizationId
+        ? (await storage.getUserPermissionsInOrg(req.user.id, req.organizationId)).some(p => p.resource === resource && p.action === action)
+        : await RBACService.hasPermission(req.user.id, resource, action));
 
     if (!hasPermission) {
       await RBACService.logAuditEvent({
@@ -425,6 +433,17 @@ export const requireRole = (roles: string | string[]) => {
 
     next();
   };
+};
+
+/** Owner or admin of the current organization, or a platform admin */
+export const requireOrgAdmin = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+  if (req.user.role === "admin" || req.orgRole === "owner" || req.orgRole === "admin") {
+    return next();
+  }
+  return res.status(403).json({ message: "Organization owner or admin access required" });
 };
 
 /**

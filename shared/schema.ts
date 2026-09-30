@@ -16,12 +16,14 @@ export const users = pgTable("users", {
   profileImage: text("profile_image"), // OAuth profile image URL
   firstName: text("first_name"), // OAuth first name
   lastName: text("last_name"), // OAuth last name
+  defaultOrganizationId: uuid("default_organization_id"), // the organization a session acts on unless X-Organization-Id says otherwise
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const erpConnections = pgTable("erp_connections", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").references(() => users.id).notNull(),
+  userId: uuid("user_id").references(() => users.id).notNull(), // who created it
+  organizationId: uuid("organization_id").references(() => organizations.id), // tenant that owns it
   erpSystem: text("erp_system").notNull(), // SAP, NetSuite, Dynamics365, etc.
   isConnected: boolean("is_connected").default(false).notNull(),
   accessToken: text("access_token"),
@@ -43,6 +45,7 @@ export const erpSnapshots = pgTable("erp_snapshots", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   connectionId: uuid("connection_id").references(() => erpConnections.id).notNull(),
   userId: uuid("user_id").references(() => users.id).notNull(),
+  organizationId: uuid("organization_id").references(() => organizations.id),
   erpSystem: text("erp_system").notNull(),
   snapshot: jsonb("snapshot").notNull(),
   warnings: jsonb("warnings"),
@@ -51,7 +54,8 @@ export const erpSnapshots = pgTable("erp_snapshots", {
 
 export const kpiConfigurations = pgTable("kpi_configurations", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").references(() => users.id).notNull(),
+  userId: uuid("user_id").references(() => users.id).notNull(), // who created it
+  organizationId: uuid("organization_id").references(() => organizations.id), // shared by the whole tenant
   name: text("name").notNull(),
   type: text("type").notNull(), // revenue, orders, inventory, performance, efficiency
   erpSource: text("erp_source").notNull(),
@@ -207,10 +211,29 @@ export const organizations = pgTable("organizations", {
   website: text("website"),
   logo: text("logo"), // URL to organization logo
   isActive: boolean("is_active").default(true).notNull(),
-  settings: jsonb("settings"), // Organization-specific settings
+  settings: jsonb("settings"), // branding, KPI targets and other template customisation
+  // Each tenant brings its own AI key; the platform only pays for hosting
+  aiProvider: text("ai_provider").default("none").notNull(), // none | openai | anthropic
+  aiApiKey: text("ai_api_key"), // encrypted
+  aiModel: text("ai_model"),
+  plan: text("plan").default("trial").notNull(), // trial | starter | pro | dedicated
+  planStatus: text("plan_status").default("active").notNull(), // active | past_due | cancelled
   createdBy: uuid("created_by").references(() => users.id).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+/** Email invitations into an organization; accepted at registration or by an existing user */
+export const organizationInvitations = pgTable("organization_invitations", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: uuid("organization_id").references(() => organizations.id).notNull(),
+  email: text("email").notNull(),
+  roleName: text("role_name").default("user").notNull(),
+  token: text("token").notNull().unique(),
+  invitedBy: uuid("invited_by").references(() => users.id),
+  expiresAt: timestamp("expires_at").notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const organizationMembers = pgTable("organization_members", {
@@ -692,6 +715,8 @@ export type AuthUser = Pick<User, 'id' | 'username' | 'email' | 'role' | 'authPr
 export type InsertErpConnection = z.infer<typeof insertErpConnectionSchema>;
 export type ErpConnection = typeof erpConnections.$inferSelect;
 export type ErpSnapshotRow = typeof erpSnapshots.$inferSelect;
+export type OrganizationInvitation = typeof organizationInvitations.$inferSelect;
+export type InsertOrganizationInvitation = typeof organizationInvitations.$inferInsert;
 export type InsertErpSnapshotRow = typeof erpSnapshots.$inferInsert;
 export type InsertKpiConfiguration = z.infer<typeof insertKpiConfigurationSchema>;
 export type KpiConfiguration = typeof kpiConfigurations.$inferSelect;

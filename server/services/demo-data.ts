@@ -3,7 +3,8 @@ import { users, erpConnections, kpiConfigurations, dashboardKpiPreferences, dash
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { storage } from "../storage";
-import { syncUser } from "./syncService";
+import { syncOrganization } from "./syncService";
+import { setOrgMemberRole } from "./orgService";
 import crypto from "crypto";
 
 // Demo accounts share one password. Set DEMO_USER_PASSWORD to make it known; otherwise a
@@ -44,6 +45,27 @@ export const DEMO_USERS = [
 ];
 
 /** The demo ERP connection every demo user gets: the generated Morton Industries dataset */
+export const DEMO_ORGANIZATION = { name: "morton-industries", displayName: "Morton Industries", website: "https://mortonindustries.example" };
+
+/** The demo users all belong to one tenant: Morton Industries. The CFO owns it. */
+export async function ensureDemoOrganization(demoUsers: any[]): Promise<{ id: string } | null> {
+  if (demoUsers.length === 0) return null;
+  const owner = demoUsers.find(u => u.email === "cfo@demo.jeldi.app") ?? demoUsers[0];
+  let org = await storage.getOrganizationByName(DEMO_ORGANIZATION.name);
+  if (!org) {
+    org = await storage.createOrganization({ ...DEMO_ORGANIZATION, createdBy: owner.id, isActive: true, aiProvider: "none", plan: "demo" } as any);
+    console.log(`Created demo organization ${DEMO_ORGANIZATION.displayName}`);
+  }
+  const roleFor: Record<string, string> = { cfo: "cfo", ops_manager: "ops_manager", admin: "admin" };
+  for (const u of demoUsers) {
+    const member = await storage.getOrganizationMember(org.id, u.id);
+    if (!member) await storage.addOrganizationMember({ organizationId: org.id, userId: u.id, status: "active", isOwner: u.id === owner.id, invitedBy: owner.id });
+    await setOrgMemberRole(u.id, org.id, (roleFor[u.role] ?? "user") as any, owner.id);
+    if (u.defaultOrganizationId !== org.id) await storage.updateUser(u.id, { defaultOrganizationId: org.id });
+  }
+  return org;
+}
+
 export const DEMO_ERP_CONNECTION = {
   erpSystem: "demo",
   connectionType: "credentials",
@@ -241,28 +263,30 @@ export async function initializeDemoUsers() {
 /**
  * Initialize demo ERP connections for demo users
  */
-export async function initializeDemoERPConnections(demoUsers: any[]) {
+export async function initializeDemoERPConnections(demoUsers: any[], organizationId: string) {
   if (!isDemoEnvironment()) {
     console.log('Skipping demo ERP initialization - not in demo environment');
     return;
   }
 
-  console.log('Initializing demo ERP connections for demo.jeldi.app...');
+  console.log('Initializing the Morton Industries demo ERP connection...');
 
   if (demoUsers.length === 0) {
     console.log('No demo users provided, skipping ERP initialization');
     return;
   }
 
-  for (const user of demoUsers) {
+  // One connection for the organization, created on behalf of the first demo user
+  for (const user of demoUsers.slice(0, 1)) {
     try {
-      const existing = await db.select().from(erpConnections).where(eq(erpConnections.userId, user.id));
+      const existing = await db.select().from(erpConnections).where(eq(erpConnections.organizationId, organizationId));
       if (existing.some((e: any) => e.erpSystem === DEMO_ERP_CONNECTION.erpSystem)) {
-        console.log(`Demo ERP connection for ${user.email} already exists, skipping`);
+        console.log(`Demo ERP connection for the organization already exists, skipping`);
         continue;
       }
       await db.insert(erpConnections).values({
         userId: user.id,
+        organizationId,
         erpSystem: DEMO_ERP_CONNECTION.erpSystem,
         isConnected: true,
         connectionType: DEMO_ERP_CONNECTION.connectionType,
@@ -280,7 +304,7 @@ export async function initializeDemoERPConnections(demoUsers: any[]) {
 /**
  * Initialize demo KPI configurations and data
  */
-export async function initializeDemoKPIs(demoUsers: any[]) {
+export async function initializeDemoKPIs(demoUsers: any[], organizationId: string) {
   if (!isDemoEnvironment()) {
     console.log('Skipping demo KPI initialization - not in demo environment');
     return;
@@ -290,24 +314,21 @@ export async function initializeDemoKPIs(demoUsers: any[]) {
 
   for (const user of demoUsers) {
     try {
-      // Check if user already has KPI configurations
+      // KPI definitions belong to the organization; create them once
       const existingConfigs = await db
         .select()
         .from(kpiConfigurations)
-        .where(eq(kpiConfigurations.userId, user.id));
+        .where(eq(kpiConfigurations.organizationId, organizationId));
 
-      if (existingConfigs.length > 0) {
-        console.log(`User ${user.email} already has ${existingConfigs.length} KPI configurations, skipping`);
-        continue;
-      }
-
+      if (existingConfigs.length === 0) {
       // Create universal KPI configurations
       const allKpis = [...UNIVERSAL_KPIS, ...ADDITIONAL_KPIS];
-      
+
       for (const kpi of allKpis) {
         // Create KPI configuration
         const [config] = await db.insert(kpiConfigurations).values({
           userId: user.id,
+          organizationId,
           name: kpi.name,
           type: kpi.type,
           erpSource: kpi.erpSource,
@@ -317,16 +338,22 @@ export async function initializeDemoKPIs(demoUsers: any[]) {
           refreshInterval: 30,
         }).returning();
 
-        console.log(`Created KPI configuration: ${kpi.name} for ${user.email} (values come from the demo ERP sync)`);
+        console.log(`Created KPI configuration: ${kpi.name} for the organization (values come from the demo ERP sync)`);
+      }
       }
 
-      // Create dashboard preferences for the first 5 KPIs (universal defaults)
+      // Each user gets their own dashboard layout over the shared definitions
+      const existingPrefs = await db.select().from(dashboardKpiPreferences).where(eq(dashboardKpiPreferences.userId, user.id));
+      if (existingPrefs.length > 0) {
+        console.log(`User ${user.email} already has ${existingPrefs.length} KPI preferences, skipping`);
+        continue;
+      }
       for (let i = 0; i < UNIVERSAL_KPIS.length; i++) {
         const kpiType = UNIVERSAL_KPIS[i].type;
         const config = await db
           .select()
           .from(kpiConfigurations)
-          .where(eq(kpiConfigurations.userId, user.id))
+          .where(eq(kpiConfigurations.organizationId, organizationId))
           .then(configs => configs.find(c => c.type === kpiType));
 
         if (config) {
@@ -407,16 +434,16 @@ export async function initializeAllDemoData() {
 
   try {
     const demoUsers = await initializeDemoUsers();
-    await initializeDemoERPConnections(demoUsers);
-    await initializeDemoKPIs(demoUsers);
+    const org = await ensureDemoOrganization(demoUsers);
+    if (!org) throw new Error("No demo users");
+    await initializeDemoERPConnections(demoUsers, org.id);
+    await initializeDemoKPIs(demoUsers, org.id);
     await initializeDemoCharts(demoUsers);
 
     // Pull the Morton Industries snapshot so KPIs, charts and analytics have values immediately
-    for (const user of demoUsers) {
-      if ((await storage.getLatestErpSnapshots(user.id)).length === 0) {
-        const results = await syncUser(user.id);
-        for (const r of results) console.log(`Demo sync ${r.erpSystem} for ${user.email}: ${r.ok ? "ok" : r.message}`);
-      }
+    if ((await storage.getLatestErpSnapshots(org.id)).length === 0) {
+      const results = await syncOrganization(org.id);
+      for (const r of results) console.log(`Demo sync ${r.erpSystem} for Morton Industries: ${r.ok ? "ok" : r.message}`);
     }
     
     console.log('✅ Demo data initialization complete');
