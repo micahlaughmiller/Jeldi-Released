@@ -5,7 +5,10 @@ import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import ws from "ws";
-import * as schema from "@shared/schema";
+import * as coreSchema from "@shared/schema";
+import * as ledgerSchema from "@shared/ledger-schema";
+
+const schema = { ...coreSchema, ...ledgerSchema };
 
 const url = process.env.DATABASE_URL;
 if (!url) {

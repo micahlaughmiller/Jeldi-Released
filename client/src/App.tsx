@@ -12,6 +12,7 @@ import DemoPage from "@/pages/demo";
 import Settings from "@/pages/settings";
 import AIAssistant from "@/pages/ai-assistant";
 import Analytics from "@/pages/analytics";
+import Ledger from "@/pages/ledger";
 import NotFound from "@/pages/not-found";
 import RoleManagement from "@/pages/role-management";
 import AdminDashboard from "@/pages/admin-dashboard";
@@ -30,6 +31,11 @@ function Router() {
       <Route path="/analytics">
         <AIEnabledLayout>
           <Analytics />
+        </AIEnabledLayout>
+      </Route>
+      <Route path="/ledger">
+        <AIEnabledLayout>
+          <Ledger />
         </AIEnabledLayout>
       </Route>
       <Route path="/email">

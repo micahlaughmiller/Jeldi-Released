@@ -52,7 +52,7 @@ export default function ERPConnectionsModal({ isOpen, onClose }: ERPConnectionsM
   });
 
   const connectedSystems = systems.filter(s => s.isConnected);
-  const availableSystems = systems.filter(s => !s.isConnected);
+  const availableSystems = systems.filter(s => !s.isConnected && !(s as any).builtIn);
 
   const filteredAvailable = availableSystems.filter(system =>
     system.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||

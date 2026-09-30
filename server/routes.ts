@@ -5,9 +5,10 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { isDemoEnvironment } from "./services/demo-data";
 import { hasConnector, buildConnector, splitCredentials } from "./connectors";
-import { syncOrganization, syncConnection, latestSnapshotForOrg } from "./services/syncService";
+import { syncOrganization, syncConnection, latestSnapshotForOrg, writeKpiValues } from "./services/syncService";
 import { resolveOrganizationForUser, createPersonalOrganization, acceptInvitation, createInvitation, setOrgMemberRole, orgMemberRoleName, getOrgAiConfig, setOrgAiConfig, orgAiKeyHint, ORG_MEMBER_ROLES, type OrgMemberRole, type AiProvider } from "./services/orgService";
 import { testAiConfig, describeAiError, AiNotConfiguredError } from "./services/aiService";
+import { registerLedgerRoutes } from "./ledger/ledgerRoutes";
 import { revenue90d, unpaidInvoices, refunds30d, cancellations30d, monthlyRevenue, businessMetrics as liveBusinessMetrics, computeKpis, kpiTrend, kpiDrilldown, KPI_TYPES, type KpiType } from "./services/kpiEngine";
 import { sql } from "drizzle-orm";
 import { erpService } from "./services/erpService";
@@ -2567,6 +2568,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
           }
           
           allKpis = await storage.getKpiConfigurations(req.organizationId);
+        // KPI definitions were just created: fill them from any snapshot the organization already has
+        await writeKpiValues(req.organizationId).catch(() => undefined);
         }
         
         // Now create default preferences
@@ -2591,8 +2594,13 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         preferences = await storage.getDashboardKpiPreferences(req.user.id);
       }
       
-      // Latest value for every KPI in one query
-      const latest = await storage.getLatestKpiDataForOrg(req.organizationId);
+      // Latest value for every KPI in one query; if nothing has been written yet (definitions newer
+      // than the last sync), compute from the current snapshot now
+      let latest = await storage.getLatestKpiDataForOrg(req.organizationId);
+      if (latest.size === 0 && preferences.length > 0) {
+        await writeKpiValues(req.organizationId).catch(() => undefined);
+        latest = await storage.getLatestKpiDataForOrg(req.organizationId);
+      }
       const preferencesWithData = preferences.map(pref => ({ ...pref, latestData: latest.get(pref.kpiConfig.id) }));
       
       res.json({ preferences: preferencesWithData, defaults: [] });
@@ -2730,6 +2738,8 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         
         // Fetch the newly created KPIs
         allKpis = await storage.getKpiConfigurations(req.organizationId);
+        // KPI definitions were just created: fill them from any snapshot the organization already has
+        await writeKpiValues(req.organizationId).catch(() => undefined);
       }
       
       // Group KPIs by category
@@ -4298,6 +4308,9 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     const policy = passwordPolicyService.getPolicy();
     res.json(policy);
   });
+
+  // Built-in ledger (organizations that use Jeldi as their system of record)
+  registerLedgerRoutes(app, { authenticateToken, requirePermission });
 
   const httpServer = createServer(app);
 

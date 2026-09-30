@@ -25,6 +25,8 @@ export interface ERPSystem {
   apiBaseUrl: string;
   supportsApiKey?: boolean;
   supportsManualConfig?: boolean;
+  /** Jeldi's own ledger: enabled from the Ledger page, not the connection wizard */
+  builtIn?: boolean;
   isConnected?: boolean;
   lastSync?: Date;
 }
@@ -166,6 +168,17 @@ export const ERP_SYSTEMS: Record<string, ERPSystem> = {
     supportsApiKey: true,
     supportsManualConfig: true
   }
+};
+
+ERP_SYSTEMS.jeldi = {
+  name: "jeldi",
+  displayName: "Jeldi Ledger (built-in)",
+  description: "Orders, shipments, invoices, payments and jobs kept in Jeldi itself",
+  oauthConfig: { authUrl: "", tokenUrl: "", clientId: "", scopes: [] },
+  apiBaseUrl: "",
+  supportsApiKey: false,
+  supportsManualConfig: false,
+  builtIn: true,
 };
 
 // Fictional Morton Industries dataset, offered outside production and on the demo deployment
