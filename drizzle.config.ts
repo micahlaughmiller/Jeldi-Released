@@ -10,7 +10,7 @@ const isPglite = url.startsWith("pglite:");
 
 export default defineConfig({
   out: "./migrations",
-  schema: ["./shared/schema.ts", "./shared/ledger-schema.ts", "./shared/sources-schema.ts"],
+  schema: ["./shared/schema.ts", "./shared/ledger-schema.ts", "./shared/sources-schema.ts", "./shared/email-schema.ts"],
   dialect: "postgresql",
   ...(isPglite
     ? { driver: "pglite" as const, dbCredentials: { url: url.replace(/^pglite:\/{0,2}/, "") || "memory://" } }

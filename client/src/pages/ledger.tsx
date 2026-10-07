@@ -18,6 +18,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { getApiUrl } from "@/lib/api-config";
 import { performLogout } from "@/lib/logout";
 import type { User } from "@shared/schema";
+import { EmailRowMenu } from "@/components/email/email-context-menu";
+import { draftFromLedger } from "@shared/email-format";
 
 interface Status { enabled: boolean; lastSync: string | null; counts: { customers: number; items: number; orders: number; invoices: number; jobs: number; shipments: number; payments: number } }
 interface Customer { id: string; name: string; email: string | null; phone: string | null; paymentTermsDays: number }
@@ -155,8 +157,8 @@ function CustomersTab({ onChange }: { onChange: () => void }) {
           <TableBody>
             {rows.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">No customers yet</TableCell></TableRow>}
             {rows.map(c => (
-              <TableRow key={c.id}><TableCell className="font-medium">{c.name}</TableCell><TableCell>{c.email ?? "—"}</TableCell><TableCell>{c.phone ?? "—"}</TableCell><TableCell className="text-right">{c.paymentTermsDays}d</TableCell>
-                <TableCell className="text-right"><Button variant="ghost" size="sm" onClick={() => remove.mutate(c.id)} title="Delete"><i className="fas fa-trash"></i></Button></TableCell></TableRow>
+              <EmailRowMenu key={c.id} draft={() => draftFromLedger("customer", c)} as="tr" className="border-b transition-colors hover:bg-muted/50" testId={`customer-${c.id}`}><TableCell className="font-medium">{c.name}</TableCell><TableCell>{c.email ?? "—"}</TableCell><TableCell>{c.phone ?? "—"}</TableCell><TableCell className="text-right">{c.paymentTermsDays}d</TableCell>
+                <TableCell className="text-right"><Button variant="ghost" size="sm" onClick={() => remove.mutate(c.id)} title="Delete"><i className="fas fa-trash"></i></Button></TableCell></EmailRowMenu>
             ))}
           </TableBody>
         </Table>
@@ -256,7 +258,7 @@ function OrdersTab({ onChange }: { onChange: () => void }) {
           <TableBody>
             {orders.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">No orders yet</TableCell></TableRow>}
             {orders.map(o => (
-              <TableRow key={o.id} data-testid={`order-${o.number}`}>
+              <EmailRowMenu key={o.id} draft={() => draftFromLedger("order", o)} as="tr" className="border-b transition-colors hover:bg-muted/50" testId={`order-${o.number}`}>
                 <TableCell className="font-medium">{o.number}</TableCell><TableCell>{o.customerName}</TableCell><TableCell>{o.orderDate}</TableCell><TableCell>{o.requestedDate ?? "—"}</TableCell>
                 <TableCell className="text-right">{money(o.total)}</TableCell>
                 <TableCell><Badge variant={o.status === "open" ? "default" : o.status === "cancelled" ? "destructive" : "secondary"}>{o.status}</Badge>{o.invoiced && <Badge variant="outline" className="ml-1">invoiced</Badge>}</TableCell>
@@ -278,7 +280,7 @@ function OrdersTab({ onChange }: { onChange: () => void }) {
                   {!o.invoiced && o.status !== "cancelled" && o.lines.some(l => n(l.qtyShipped) > 0) && <Button variant="outline" size="sm" onClick={() => invoice.mutate(o.id)} data-testid={`button-invoice-${o.number}`}>Invoice</Button>}
                   {o.status === "open" && !o.lines.some(l => n(l.qtyShipped) > 0) && <Button variant="ghost" size="sm" onClick={() => cancel.mutate(o.id)} title="Cancel order"><i className="fas fa-ban"></i></Button>}
                 </TableCell>
-              </TableRow>
+              </EmailRowMenu>
             ))}
           </TableBody>
         </Table>
@@ -362,13 +364,13 @@ function InvoicesTab({ onChange }: { onChange: () => void }) {
             {rows.map(r => {
               const overdue = r.balance > 0 && r.dueDate && r.dueDate < today();
               return (
-                <TableRow key={r.id} data-testid={`invoice-${r.number}`}>
+                <EmailRowMenu key={r.id} draft={() => draftFromLedger("invoice", r)} as="tr" className="border-b transition-colors hover:bg-muted/50" testId={`invoice-${r.number}`}>
                   <TableCell className="font-medium">{r.number}{r.isCreditMemo && <Badge variant="outline" className="ml-1">credit</Badge>}</TableCell><TableCell>{r.customerName}</TableCell><TableCell>{r.orderNumber ?? "—"}</TableCell><TableCell>{r.invoiceDate}</TableCell>
                   <TableCell className={overdue ? "text-destructive font-medium" : ""}>{r.dueDate ?? "—"}</TableCell>
                   <TableCell className="text-right">{r.isCreditMemo ? "-" : ""}{money(r.amount)}</TableCell><TableCell className="text-right">{money(r.paid)}</TableCell>
                   <TableCell className={`text-right ${r.balance > 0 ? "font-medium" : "text-muted-foreground"}`}>{money(r.balance)}</TableCell>
                   <TableCell className="text-right">{r.balance > 0 && <Button variant="outline" size="sm" onClick={() => { setPay(r); setPayForm({ amount: r.balance.toFixed(2), paymentDate: today(), reference: "" }); }} data-testid={`button-pay-${r.number}`}>Record payment</Button>}</TableCell>
-                </TableRow>
+                </EmailRowMenu>
               );
             })}
           </TableBody>
@@ -414,12 +416,12 @@ function JobsTab({ onChange }: { onChange: () => void }) {
           <TableBody>
             {rows.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">No jobs yet</TableCell></TableRow>}
             {rows.map(j => (
-              <TableRow key={j.id} data-testid={`job-${j.number}`}>
+              <EmailRowMenu key={j.id} draft={() => draftFromLedger("job", j)} as="tr" className="border-b transition-colors hover:bg-muted/50" testId={`job-${j.number}`}>
                 <TableCell className="font-medium">{j.number}</TableCell><TableCell>{j.sku ? `${j.sku} · ${j.itemName}` : "—"}</TableCell><TableCell className="text-right">{n(j.qty)}</TableCell>
                 <TableCell>{j.startDate ?? "—"}</TableCell><TableCell>{j.dueDate ?? "—"}</TableCell><TableCell>{j.completedDate ?? "—"}</TableCell>
                 <TableCell><Badge variant={j.status === "open" ? "default" : "secondary"}>{j.status}</Badge></TableCell>
                 <TableCell className="text-right">{j.status === "open" && <Button variant="outline" size="sm" onClick={() => complete.mutate(j.id)} data-testid={`button-complete-${j.number}`}>Complete</Button>}</TableCell>
-              </TableRow>
+              </EmailRowMenu>
             ))}
           </TableBody>
         </Table>

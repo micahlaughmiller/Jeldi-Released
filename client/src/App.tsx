@@ -14,6 +14,7 @@ import AIAssistant from "@/pages/ai-assistant";
 import Analytics from "@/pages/analytics";
 import Ledger from "@/pages/ledger";
 import Integrations from "@/pages/integrations";
+import { EmailComposeProvider } from "@/components/email/email-compose-context";
 import NotFound from "@/pages/not-found";
 import RoleManagement from "@/pages/role-management";
 import AdminDashboard from "@/pages/admin-dashboard";
@@ -95,7 +96,9 @@ function App() {
       <PermissionProvider>
         <TooltipProvider>
           <Toaster />
+          <EmailComposeProvider>
           <Router />
+        </EmailComposeProvider>
         </TooltipProvider>
       </PermissionProvider>
     </QueryClientProvider>

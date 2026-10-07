@@ -10,6 +10,7 @@ import { resolveOrganizationForUser, createPersonalOrganization, acceptInvitatio
 import { testAiConfig, describeAiError, AiNotConfiguredError } from "./services/aiService";
 import { registerLedgerRoutes } from "./ledger/ledgerRoutes";
 import { registerSourceRoutes } from "./sources/sourceRoutes";
+import { emailInbox } from "./services/emailInbox";
 import { revenue90d, unpaidInvoices, refunds30d, cancellations30d, monthlyRevenue, businessMetrics as liveBusinessMetrics, computeKpis, kpiTrend, kpiDrilldown, KPI_TYPES, type KpiType } from "./services/kpiEngine";
 import { sql } from "drizzle-orm";
 import { erpService } from "./services/erpService";
@@ -3016,7 +3017,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
   }));
 
   // Email routes
-  app.get("/api/email/providers", authenticateToken, requirePermission("email", "manage"), asAuth(async (req, res) => {
+  app.get("/api/email/providers", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
     try {
       const configurations = await emailService.getEmailConfigurations(req.user.id);
       
@@ -3034,7 +3035,7 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   }));
 
-  app.get("/api/email/status", authenticateToken, requirePermission("email", "manage"), asAuth(async (req, res) => {
+  app.get("/api/email/status", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
     try {
       const outlookStatus = await emailService.checkOutlookConnection(req.user.id);
       const configurations = await emailService.getEmailConfigurations(req.user.id);
@@ -3248,6 +3249,46 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
     }
   });
 
+  // Sent log: everything sent from inside Jeldi (admins/owners see the whole organization)
+  app.get("/api/email/sent", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
+    try {
+      const all = req.user.role === "admin" || req.orgRole === "owner" || req.orgRole === "admin";
+      res.json(await emailInbox.sent(req.organizationId, all ? null : req.user.id, Math.min(Number(req.query.limit) || 100, 500)));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load sent mail", error: (error as Error).message });
+    }
+  }));
+
+  // Inbox for the connected Gmail / Outlook account (read scopes are part of the OAuth consent)
+  app.get("/api/email/inbox", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
+    const provider = String(req.query.provider || "");
+    if (provider !== "gmail" && provider !== "outlook") return res.status(400).json({ message: "provider must be gmail or outlook" });
+    try {
+      res.json({ provider, messages: await emailInbox.list(req.user.id, provider, Math.min(Number(req.query.limit) || 25, 50)) });
+    } catch (error) {
+      res.status(/not connected|reconnect/i.test((error as Error).message) ? 409 : 502).json({ message: (error as Error).message });
+    }
+  }));
+
+  app.get("/api/email/inbox/:provider/:id", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
+    const provider = req.params.provider;
+    if (provider !== "gmail" && provider !== "outlook") return res.status(400).json({ message: "provider must be gmail or outlook" });
+    try {
+      res.json(await emailInbox.get(req.user.id, provider, req.params.id));
+    } catch (error) {
+      res.status(/not connected|reconnect/i.test((error as Error).message) ? 409 : 502).json({ message: (error as Error).message });
+    }
+  }));
+
+  // Who you can address: organization members and known customers
+  app.get("/api/email/directory", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
+    try {
+      res.json(await emailInbox.directory(req.organizationId));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load directory", error: (error as Error).message });
+    }
+  }));
+
   // Demo outbox: what the demo provider "sent" (captured, never delivered)
   app.get("/api/email/outbox", authenticateToken, requirePermission("email", "send"), asAuth(async (req, res) => {
     res.json({ enabled: emailService.isDemoOutboxEnabled(), messages: emailService.getOutbox(req.user.id) });
@@ -3298,17 +3339,32 @@ export async function registerRoutes(app: Express, options: { excludeWebSocket?:
         isHtml: emailRequest.isHtml
       };
       
-      const success = await emailService.sendEmail(
-        req.user.id, 
-        emailRequest.provider, 
-        emailMessage, 
-        emailRequest.template, 
-        emailRequest.templateVariables
-      );
-      
+            const logSend = (status: "sent" | "failed", error?: string) => emailInbox.logSent({
+        organizationId: req.organizationId, userId: req.user.id, provider: emailRequest.provider, fromAddress: req.user.email ?? null,
+        to: emailMessage.to, cc: emailMessage.cc ?? [], subject: emailMessage.subject || emailRequest.template || "(template)", body: emailMessage.body,
+        isHtml: Boolean(emailMessage.isHtml), status, error: error ?? null,
+        relatedKind: emailRequest.related?.kind ?? null, relatedId: emailRequest.related?.id ?? null, relatedTitle: emailRequest.related?.title ?? null,
+      }).catch(err => console.error("sent-log write failed:", (err as Error).message));
+
+      let success = false;
+      try {
+        success = await emailService.sendEmail(
+          req.user.id,
+          emailRequest.provider,
+          emailMessage,
+          emailRequest.template,
+          emailRequest.templateVariables
+        );
+      } catch (sendError) {
+        await logSend("failed", (sendError as Error).message);
+        throw sendError;
+      }
+
       if (success) {
-        res.json({ message: "Email sent successfully" });
+        const logged = await logSend("sent");
+        res.json({ message: "Email sent successfully", id: logged?.id ?? null });
       } else {
+        await logSend("failed", "provider returned false");
         res.status(500).json({ message: "Failed to send email" });
       }
     } catch (error) {

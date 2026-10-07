@@ -903,7 +903,9 @@ export const emailSendRequestSchema = z.object({
   body: z.string().max(50000, { message: "Email body too long" }).optional(),
   template: z.string().optional(),
   templateVariables: z.record(z.any()).optional(),
-  isHtml: z.boolean().default(false)
+  isHtml: z.boolean().default(false),
+  /** The record this email is about (an issue, an invoice, a KPI row); kept with the sent log */
+  related: z.object({ kind: z.string().max(40), id: z.string().max(200), title: z.string().max(500) }).optional(),
 }).refine(data => data.subject || data.template, {
   message: "Either subject or template must be provided",
   path: ["subject"]

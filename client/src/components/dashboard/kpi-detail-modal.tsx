@@ -2,6 +2,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { EmailRowMenu } from "@/components/email/email-context-menu";
+import { draftFromDrilldownRow } from "@shared/email-format";
 
 interface Column { key: string; label: string; kind?: "money" | "number" | "percent" | "date" | "text" | "days" }
 interface KpiDetails {
@@ -107,7 +109,7 @@ export default function KpiDetailModal({ type, name, onClose }: Props) {
                     {data.drilldown.total > data.drilldown.rows.length ? `showing ${data.drilldown.rows.length} of ${data.drilldown.total}` : `${data.drilldown.total} records`}
                   </span>
                 </div>
-                {data.drilldown.note && <p className="text-xs text-muted-foreground mb-3">{data.drilldown.note}</p>}
+                {data.drilldown.note && <p className="text-xs text-muted-foreground mb-3">{data.drilldown.note} Right-click a row to send it by email.</p>}
                 <div className="overflow-x-auto border rounded-lg">
                   <table className="w-full text-sm" data-testid="kpi-detail-table">
                     <thead className="bg-muted/50">
@@ -122,7 +124,7 @@ export default function KpiDetailModal({ type, name, onClose }: Props) {
                         <tr><td colSpan={data.drilldown.columns.length} className="px-3 py-6 text-center text-muted-foreground">No records in this period.</td></tr>
                       )}
                       {data.drilldown.rows.map((row, i) => (
-                        <tr key={i} className="border-t hover:bg-muted/30">
+                        <EmailRowMenu key={i} as="tr" className="border-t hover:bg-muted/30" draft={() => draftFromDrilldownRow(name ?? type ?? "KPI", data.drilldown!.title, data.drilldown!.columns, row)}>
                           {data.drilldown!.columns.map(c => {
                             const v = row[c.key];
                             const numeric = c.kind === "money" || c.kind === "number" || c.kind === "percent" || c.kind === "days";
@@ -133,7 +135,7 @@ export default function KpiDetailModal({ type, name, onClose }: Props) {
                               </td>
                             );
                           })}
-                        </tr>
+                        </EmailRowMenu>
                       ))}
                     </tbody>
                   </table>

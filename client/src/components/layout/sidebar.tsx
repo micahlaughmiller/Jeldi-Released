@@ -120,6 +120,20 @@ export default function Sidebar({ user, onLogout, onERPClick, connectedCount }: 
           </a>
         </Link>
 
+        <Link href="/email" asChild>
+          <a
+            className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+              location === "/email" || location === "/email-center"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            }`}
+            data-testid="nav-email"
+          >
+            <i className="fas fa-envelope w-4"></i>
+            <span className="font-medium">Email</span>
+          </a>
+        </Link>
+
         <Link href="/ai-assistant" asChild>
           <a 
             className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${

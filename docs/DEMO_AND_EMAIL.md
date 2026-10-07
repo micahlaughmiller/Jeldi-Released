@@ -67,5 +67,31 @@ Common SMTP settings:
 | Fastmail | smtp.fastmail.com | 465 (TLS) |
 | Microsoft 365 (SMTP AUTH) | smtp.office365.com | 587 |
 
+## Email inside Jeldi
+
+Nobody has to leave the app to send or read mail.
+
+* **Email page** (sidebar > Email): **Inbox** reads the connected Outlook or Gmail mailbox
+  (newest 25, open a message, Reply pre-fills the composer with the quoted text); **Sent from
+  Jeldi** is the organization's log of everything sent through Jeldi, with what each email was
+  about; **Accounts** connects Outlook, Gmail or SMTP. SMTP can send but has no inbox.
+* **Right-click any record to email it**: issues, pull requests, Teams messages, files and
+  QuickBooks documents on the Integrations page; orders, invoices, jobs and customers in the
+  Ledger; any row of a KPI drill-down. "Send by email..." opens the composer with the record's
+  details written into the message as plain text. Links are stripped on purpose: the reader
+  needs nothing but the email. "Copy details" puts the same text on the clipboard.
+* **Recipients**: start typing and the composer suggests people from the organization and
+  customers known to the ledger or the connected finance tool; any address can be typed too.
+* Every send is logged in `email_messages` (organization, sender, provider, recipients, subject,
+  body, status, and the related record). Owners and admins see the whole organization's log,
+  everyone else their own.
+
+Formatting lives in `shared/email-format.ts` (`draftFromSourceRecord`, `draftFromLedger`,
+`draftFromDrilldownRow`); the composer is `client/src/components/modals/email-composer.tsx`,
+opened from anywhere through `useEmailCompose()`; the right-click wrapper is
+`client/src/components/email/email-context-menu.tsx`.
+
 Endpoints: `GET /api/email/status`, `POST /api/email/connect/:provider`,
-`DELETE /api/email/disconnect/:provider`, `POST /api/email/send`, `GET /api/email/outbox`.
+`DELETE /api/email/disconnect/:provider`, `POST /api/email/send` (accepts `related`),
+`GET /api/email/sent`, `GET /api/email/inbox?provider=outlook|gmail`,
+`GET /api/email/inbox/:provider/:id`, `GET /api/email/directory`, `GET /api/email/outbox`.

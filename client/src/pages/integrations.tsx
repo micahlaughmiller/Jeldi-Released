@@ -14,6 +14,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { performLogout } from "@/lib/logout";
 import type { User } from "@shared/schema";
+import { EmailRowMenu } from "@/components/email/email-context-menu";
+import { draftFromSourceRecord } from "@shared/email-format";
 
 interface TokenField { key: string; label: string; placeholder?: string; secret?: boolean; required?: boolean; help?: string }
 interface Provider { provider: string; displayName: string; description: string; authModes: string[]; oauthAvailable: boolean; finance?: boolean; tokenFields: TokenField[] }
@@ -219,9 +221,10 @@ function Feed({ providers }: { providers: Provider[] }) {
       </CardHeader>
       <CardContent>
         {rows.length === 0 && <p className="text-sm text-muted-foreground">{isFetching ? "Loading…" : "No records match."}</p>}
+        {rows.length > 0 && <p className="text-xs text-muted-foreground mb-1">Right-click any row (or use the envelope) to send its details by email.</p>}
         <ul className="divide-y">
           {rows.map(r => (
-            <li key={r.id} className="py-2 flex gap-3 text-sm">
+            <EmailRowMenu key={r.id} draft={() => draftFromSourceRecord(r)} as="li" className="py-2 flex gap-3 text-sm group" testId={`feed-row-${r.id}`}>
               <i className={`${ICON[r.provider] ?? "fas fa-circle"} mt-1 w-4 text-muted-foreground`}></i>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -232,7 +235,7 @@ function Feed({ providers }: { providers: Provider[] }) {
                 <div className="text-muted-foreground text-xs truncate">{[r.container, r.author, r.occurredAt ? new Date(r.occurredAt).toLocaleString() : null].filter(Boolean).join(" · ")}</div>
                 {r.text && <div className="text-muted-foreground text-xs mt-0.5 line-clamp-2">{r.text}</div>}
               </div>
-            </li>
+            </EmailRowMenu>
           ))}
         </ul>
       </CardContent>
